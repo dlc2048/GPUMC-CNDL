@@ -1,0 +1,37 @@
+[info] 
+The mfd parameter specfies the ENDF File to be processed. The
+allowed mfd values and their meanings are:
+     mfd          meaning
+     ---          -------
+      3           cross section or yield vector
+      5           fission chi by short-cut method
+      6           neutron-neutron matrix (mf4/5)
+      8           neutron-neutron matrix (mf6)
+     12           photon prod. xsec (photon yields given, mf12)
+     13           photon prod. xsec (photon xsecs given, mf13)
+     16           neutron-gamma matrix (photon yields given)
+     17           neutron-gamma matrix (photon xsecs given)
+     18           neutron-gamma matrix (mf6)
+     21           proton production matrix (mf6)
+     22           deuteron production (mf6)
+     23           triton production (mf6)
+     24           he-3 production (mf6)
+     25           alpha production (mf6)
+     26           residual nucleus (a>4) production (mf6)
+     31           proton production matrix (mf4)
+     32           deuteron production (mf4)
+     33           triton production (mf4)
+     34           he-3 production (mf4)
+     35           alpha production (mf4)
+     36           residual nucleus (a>4) production (mf4)
+    1zzzaaam       nuclide production for zzzaaam
+                     subsection from file 3
+    2zzzaaam       nuclide production for zzzaaam
+                     subsection from file 6
+    3zzzaaam       nuclide production for zzzaaam
+                     subsection from file 9
+    4zzzaaam       nuclide production for zzzaaam
+                     subsection from file 10
+
+For more information, see the NJOY manual.
+

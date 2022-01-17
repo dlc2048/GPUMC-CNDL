@@ -1,0 +1,14 @@
+endf_path		endf/n
+thermal_path		endf/kernel
+endf_target		n_0425_4-Be-9.dat
+njoy_executable	/home/dlc2048/NJOY21/bin/njoy21
+njoy_workspace		NJOY
+njoy_input		input
+njoy_output		output
+njoy_target		tape20
+njoy_GENDF		tape31
+res_merge_nsample	20000
+equiprob_nbin		32
+equibin_steps		1001
+thermal_thres		5
+temperature		293.6
