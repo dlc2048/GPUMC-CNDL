@@ -12,21 +12,27 @@ def legendreToPolynomial(coeff):
         polynomial[-1-order:] += val * legendre(order)
     return polynomial
 
-def legendreToEquibin(coeff, nbin):
+def legendreToEquibin(coeff, nbin, mu_min=-1.0, mu_max=1.0):
     """
         convert legendre angle distribution to
         equiprobable angle bin distribution
+        from mu_min to mu_max
     """
+    if mu_min >= mu_max:
+        raise ValueError("mu_min must be smaller than mu_max")
+        
     poly = legendreToPolynomial(coeff)
 
     # find roots, only real number
     roots = np.roots(poly)
     roots = np.real(roots[np.isreal(roots)])
-    roots = roots[(-1 < roots) * (roots < 1)]
+    roots = roots[(mu_min < roots) * (roots < mu_max)]
     roots = np.sort(roots)
     roots = np.unique(roots)
-    roots = np.append(-1, roots)
-    roots = np.append(roots, 1)
+    if mu_min not in roots:
+        roots = np.append(mu_min, roots)
+    if mu_max not in roots:
+        roots = np.append(roots, mu_max)
 
     # get integral
     polyint = np.poly1d(np.polyint(poly))
@@ -39,8 +45,8 @@ def legendreToEquibin(coeff, nbin):
 
     # find equiprob angle bin
     angle_bin = np.empty(nbin+1, dtype=np.float64)
-    angle_bin[0] = -1.e0
-    angle_bin[-1] = 1.e0
+    angle_bin[0] = mu_min
+    angle_bin[-1] = mu_max
     n = 1
     for i in range(len(area)):
         if area[i] <= 0:

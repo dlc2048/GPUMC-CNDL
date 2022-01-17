@@ -25,7 +25,7 @@ mat = endf_data.material
 temp = float(ENV["temperature"])
     
 # njoy data processing
-"""
+
 print("*** NJOY processing ***")
 os.makedirs(ENV["njoy_workspace"], exist_ok=True)
 shutil.copy(os.path.join(ENV["endf_path"], ENV["endf_target"]),
@@ -55,7 +55,6 @@ with subprocess.Popen([ENV["njoy_executable"],
 
 os.remove(ENV["njoy_output"])
 os.chdir("..")
-"""
 
 # read GENDF file
 print("*** READ GENDF FILE ***")

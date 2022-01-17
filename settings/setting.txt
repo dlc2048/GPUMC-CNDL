@@ -9,6 +9,7 @@ njoy_target		tape20
 njoy_GENDF		tape31
 res_merge_nsample	20000
 equiprob_nbin		32
+enetrans_steps		50
 equibin_steps		1001
 thermal_thres		5
 temperature		293.6

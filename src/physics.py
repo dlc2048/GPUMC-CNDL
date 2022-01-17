@@ -172,8 +172,9 @@ class MF4AngularDistribution:
         self._ad = angular_distribution # must be pyne.endf.Evaluate.reactions[2].angular_distribution
 
     def _getAngularDist(self, inc_energy):
+        t = np.argmax(self._ad.energy > inc_energy)
         if self._ad.type == 'tabulated': # tabulated dataset
-            t = np.argmax(self._ad.energy > inc_energy)
+            is_tab = True
             # get concatenate tabulated point
             angle_point = np.unique(np.concatenate((self._ad.probability[t-1].x, self._ad.probability[t].x)), 0)
             tab_lower = interp1d(self._ad.probability[t-1].x, 
@@ -182,30 +183,59 @@ class MF4AngularDistribution:
                                  self._ad.probability[t].y, 2).get(angle_point)
             pyfunc = lambda en_low, en_up, ang_low, ang_up, ene: interp1d([en_low, en_up], [ang_low, ang_up], 4).get(ene)
             vfunc = np.vectorize(pyfunc)
-            return angle_point, vfunc(self._ad.energy[t-1], self._ad.energy[t],
-                                      tab_lower, tab_upper, inc_energy)
+            return True, angle_point, vfunc(self._ad.energy[t-1], self._ad.energy[t],
+                                            tab_lower, tab_upper, inc_energy)
+        
+        elif self._ad.type == 'legendre': # legendre dataset
+            is_tab = False
+            leg_lower = self._ad.probability[t-1]
+            leg_upper = self._ad.probability[t]
+            # get logx - y interpolated legendre coeff
+            log_en_lower = np.log(self._ad.energy[t-1])
+            log_en_upper = np.log(self._ad.energy[t])
+            log_en_inc = np.log(inc_energy)
+            c = (log_en_inc - log_en_lower) / (log_en_upper - log_en_lower)
+            leg = leg_lower * c + leg_upper * (1-c)
+            return False, leg
 
     def getArea(self, inc_energy, en_floor, en_ceil):
         mu_floor = max(energyToMuCM(self._a, inc_energy, en_floor), -1)
         mu_floor = min(mu_floor, 1)
         mu_ceil = min(energyToMuCM(self._a, inc_energy, en_ceil), 1)
         mu_ceil = max(mu_ceil, -1)
-        if self._ad.type == 'tabulated': # tabulated dataset
-            angle_point, prob_point = self._getAngularDist(inc_energy)
+        items = self._getAngularDist(inc_energy)
+        if items[0]: # tabulated dataset
+            angle_point, prob_point = items[1:]
             area_min = getInterpFtnCumulArea(angle_point, prob_point, mu_floor)
             area_max = getInterpFtnCumulArea(angle_point, prob_point, mu_ceil)
-        return area_max - area_min                
+            area = area_max - area_min
+
+        else: # legendre dataset
+            _, area = legendreToEquibin(items[1], 1, mu_floor, mu_ceil)
+        
+        return area
+
+    def getCumulEnergy(self, inc_energy, area, nsteps):
+        en_floor = self._a * inc_energy
+        en_ceil = inc_energy
+        en_last = None
+        for en in np.logspace(np.log10(en_floor), np.log10(en_ceil), nsteps):
+            if self.getArea(inc_energy, en_floor, en) > area:
+                break
+            en_last = en
+        return (en + en_last) / 2
+
 
     def getEquiAngularBin(self, inc_energy, en_floor, en_ceil, nbin):
         mu_floor = max(energyToMuCM(self._a, inc_energy, en_floor), -1)
         mu_floor = min(mu_floor, 1)
         mu_ceil = min(energyToMuCM(self._a, inc_energy, en_ceil), 1)
         mu_ceil = max(mu_ceil, -1)
-        if self._ad.type == 'tabulated': # tabulated dataset
-            angle_point, prob_point = self._getAngularDist(inc_energy)
+        items = self._getAngularDist(inc_energy)
+        if items[0]: # tabulated dataset
+            angle_point, prob_point = items[1:]
             area_min = getInterpFtnCumulArea(angle_point, prob_point, mu_floor)
             area_max = getInterpFtnCumulArea(angle_point, prob_point, mu_ceil)
-            
             area_target = np.linspace(area_min, area_max, nbin+1, dtype=np.float64)
             mu_cm = np.empty(area_target.shape, dtype=np.float64)
             mu_cm[0] = mu_floor
@@ -213,9 +243,11 @@ class MF4AngularDistribution:
             for i in range(1, len(mu_cm) - 1):
                 mu_cm[i] = getInterpFtnCumulValue(angle_point, prob_point, area_target[i])
 
+        else: # legendre dataset
+            mu_cm, _ = legendreToEquibin(items[1], nbin, mu_floor, mu_ceil)
+
         # transform cm to lab
         return (1 + self._A*mu_cm) / np.sqrt(self._A**2 + 1 + 2*self._A*mu_cm)
-
 
 
 def energyToMuCM(alpha, inc_energy, out_energy):

@@ -167,6 +167,7 @@ class CNDL(GendfInterface):
         # equiprob bin setting
         equi_steps = int(ENV["equibin_steps"])
         nbin = int(ENV["equiprob_nbin"])
+        trans_steps = int(ENV["enetrans_steps"])
         equi_probs = np.linspace(0, 1, nbin+1)
 
         # get elastic scattering angular distribution
@@ -183,18 +184,29 @@ class CNDL(GendfInterface):
                 data += [data_seg]
 
             else: # fast neutron elastic scattering
-                emin = alpha * energy_mean[i]
-                gmin = max(np.argmax(self.egn > emin) - 1, 0)
-                gmax = i                
-                ebin_target = np.copy(self.egn[gmin:gmax+2])
-                ebin_target[0] = max(emin, ebin_target[0])
-                ebin_target[-1] = energy_mean[i]
-                pyfunc = lambda inc_ene, elow, eup: ad.getArea(inc_ene, elow, eup)
-                vfunc = np.vectorize(pyfunc)
-                prob = vfunc(energy_mean[i], ebin_target[:-1], ebin_target[1:])
+                #esample = np.logspace(np.log10(self.egn[i]), np.log10(self.egn[i+1]), trans_steps+2)[1:-1]
+                esample = np.linspace(self.egn[i], self.egn[i+1], trans_steps+2)[1:-1]
+                for j in range(trans_steps):
+                    emin = alpha * esample[j]
+                    gmin = max(np.argmax(self.egn > emin) - 1, 0)
+                    gmax = i                
+                    ebin_target = np.copy(self.egn[gmin:gmax+2])
+                    ebin_target[0] = max(emin, ebin_target[0])
+                    ebin_target[-1] = esample[j]
+                    pyfunc = lambda inc_ene, elow, eup: ad.getArea(inc_ene, elow, eup)
+                    vfunc = np.vectorize(pyfunc)
+                    if j == 0:
+                        prob = vfunc(esample[j], ebin_target[:-1], ebin_target[1:])
+                        prob /= np.sum(prob)
+                        gmin_lowest = gmin
+                    else:
+                        prob_seg = vfunc(esample[j], ebin_target[:-1], ebin_target[1:])
+                        prob_seg /= np.sum(prob_seg)
+                        prob += np.pad(prob_seg, (len(prob) - len(prob_seg),0))
+                prob /= trans_steps
                 data_seg = np.zeros((len(prob) + 1, 1))
                 data_seg[1:, 0] = prob
-                label += [[len(label), i + 1, gmin + 1]]
+                label += [[len(label), i + 1, gmin_lowest + 1]]
                 data += [data_seg]
 
         self.reactions[2].mf[6] = MF6Like(data, label, len(self.egn) - 1, 6)
@@ -204,11 +216,14 @@ class CNDL(GendfInterface):
         pointer = 0
         for i in tqdm(range(len(self.reactions[2].mf[6].target_tape))):
             target_start, group_start = self.reactions[2].mf[6].target_tape[i]
+            emin = alpha * energy_mean[i]
+            emax = energy_mean[i]
+            elast = emin
             if i == len(self.reactions[2].mf[6].target_tape) - 1:
                 target_end = len(self.reactions[2].mf[6].prob_map)
             else:
                 target_end = self.reactions[2].mf[6].target_tape[i+1,0]
-            for j in range(group_start, group_start + target_end - target_start):
+            for pos, j in enumerate(range(group_start, group_start + target_end - target_start)):
                 equiprob_seg = np.ones((1, nbin + 1), dtype=np.float64)
                 if i < thermal_thres: # thermal scattering (free gas)
                     ts = ThermalScattering1D(A, temp, energy_mean[i], energy_mean[j])
@@ -230,7 +245,10 @@ class CNDL(GendfInterface):
                         mu_last = mu
                     pass
                 else: # fast neutron elastic scattering
-                    equiprob_seg = ad.getEquiAngularBin(energy_mean[i], self.egn[j], self.egn[j+1], nbin)
+                    area = self.reactions[2].mf[6].prob_map[target_start + pos,0]
+                    etarget = ad.getCumulEnergy(energy_mean[i], area, 500)
+                    equiprob_seg = ad.getEquiAngularBin(energy_mean[i], elast, etarget, nbin)
+                    elast = etarget
                 equiprob_data[pointer] = equiprob_seg
                 pointer += 1
                 
