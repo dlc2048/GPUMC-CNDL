@@ -35,4 +35,4 @@ for target_thermal in target_list_thermal:
             break
 
     if za_target != za_corr:
-        raise OSError("No ENDF file of ZA={} "
+        raise OSError("No ENDF file of ZA={} ")

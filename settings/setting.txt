@@ -1,6 +1,6 @@
 endf_path		endf/n
 thermal_path		endf/kernel
-endf_target		n_0425_4-Be-9.dat
+endf_target		n_2431_24-Cr-52.dat
 njoy_executable	/home/dlc2048/NJOY21/bin/njoy21
 njoy_workspace		NJOY
 njoy_input		input

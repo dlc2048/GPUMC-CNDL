@@ -173,30 +173,36 @@ class MF4AngularDistribution:
 
     def _getAngularDist(self, inc_energy):
         t = np.argmax(self._ad.energy > inc_energy)
-        if self._ad.type == 'tabulated': # tabulated dataset
-            is_tab = True
+        data_lower = self._ad.probability[t-1]
+        data_upper = self._ad.probability[t]
+        energy_lower = self._ad.energy[t-1]
+        energy_upper = self._ad.energy[t]
+        # get data type of two adjacent points to the target position
+        lower_is_legendre = isinstance(data_lower, np.polynomial.legendre.Legendre)
+        upper_is_legendre = isinstance(data_upper, np.polynomial.legendre.Legendre)
+
+        if not lower_is_legendre and not upper_is_legendre: # two tabulated dataset
             # get concatenate tabulated point
-            angle_point = np.unique(np.concatenate((self._ad.probability[t-1].x, self._ad.probability[t].x)), 0)
-            tab_lower = interp1d(self._ad.probability[t-1].x, 
-                                 self._ad.probability[t-1].y, 2).get(angle_point)
-            tab_upper = interp1d(self._ad.probability[t].x, 
-                                 self._ad.probability[t].y, 2).get(angle_point)
+            angle_point = np.unique(np.concatenate((data_lower.x, data_upper.x)), 0)
+            tab_lower = interp1d(data_lower.x, data_lower.y, 2).get(angle_point)
+            tab_upper = interp1d(data_upper.x, data_upper.y, 2).get(angle_point)
             pyfunc = lambda en_low, en_up, ang_low, ang_up, ene: interp1d([en_low, en_up], [ang_low, ang_up], 4).get(ene)
             vfunc = np.vectorize(pyfunc)
-            return True, angle_point, vfunc(self._ad.energy[t-1], self._ad.energy[t],
+            return True, angle_point, vfunc(energy_lower, energy_upper,
                                             tab_lower, tab_upper, inc_energy)
         
-        elif self._ad.type == 'legendre': # legendre dataset
-            is_tab = False
-            leg_lower = self._ad.probability[t-1]
-            leg_upper = self._ad.probability[t]
+        elif lower_is_legendre and upper_is_legendre: # two legendre dataset
             # get logx - y interpolated legendre coeff
-            log_en_lower = np.log(self._ad.energy[t-1])
-            log_en_upper = np.log(self._ad.energy[t])
+            log_en_lower = np.log(energy_lower)
+            log_en_upper = np.log(energy_upper)
             log_en_inc = np.log(inc_energy)
             c = (log_en_inc - log_en_lower) / (log_en_upper - log_en_lower)
-            leg = leg_lower * c + leg_upper * (1-c)
+            leg = data_lower * c + data_upper * (1-c)
             return False, leg
+
+        else:
+            raise TypeError('unexpected dataset type')
+
 
     def getArea(self, inc_energy, en_floor, en_ceil):
         mu_floor = max(energyToMuCM(self._a, inc_energy, en_floor), -1)
