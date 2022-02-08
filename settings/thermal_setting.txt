@@ -1,1 +1,5 @@
-101	1001	4	4	4
+* thermal scattering ENDF interpolation law
+* and related free-gas ENDF ZA code
+* thermal ZA	free gas ZA	T interp law
+101		1001		4
+126		4009		4

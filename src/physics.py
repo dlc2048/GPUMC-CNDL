@@ -1,5 +1,5 @@
 import numpy as np
-from scipy import integrate
+from scipy import integrate, optimize
 
 if __name__ == "__main__":
     from constants import *
@@ -132,9 +132,7 @@ class ThermalScattering2D:
                                  (emin-self.E)/BOLTZMANN/self.T, 
                                  (emax-self.E)/BOLTZMANN/self.T,
                                  self._aMin,
-                                 self._aMax,
-                                 epsabs=1e-5,
-                                 epsrel=1e-5)[0]
+                                 self._aMax)[0]
         return nume / self.deno
     
 
@@ -164,6 +162,52 @@ class ThermalScattering1D:
         else: # integrate is 0, assuming isotropic
             return (mu_max - mu_min) / 2
 
+
+class ScatteringKernel:
+    def __init__(self, alpha, beta, table, lnS, symmetric):
+        self.alpha = alpha
+        self.beta = beta
+        self.table = table
+        self.lnS = lnS
+        self.symmetric = symmetric
+
+
+class ThermalScatteringKernel:
+    def __init__(self, A, T, kernel):
+        self.A = A
+        self.T = T
+        self.kernel = kernel
+
+        if self.kernel.lnS:
+            self._f = interp2d(self.kernel.beta, self.kernel.alpha, self.kernel.table, 4)
+        else:
+            self._f = interp2d(self.kernel.beta, self.kernel.alpha, self.kernel.table, 5)
+    
+    def get(self, a, b):
+        if self.kernel.symmetric:
+            s = self._f.get(np.abs(b), np.abs(a))
+        else:
+            s = self._f.get(b, a)
+        
+        if self.kernel.lnS:
+            return np.exp(s) * np.exp(-b/2)
+        else:
+            return s * np.exp(-b/2)
+
+    def alpha(self, inc_energy, out_energy, mu):
+        return (inc_energy + out_energy + 2*mu*np.sqrt(inc_energy * out_energy)) / self.A / constants.BOLTZMANN / self.T
+
+    def beta(self, inc_energy, out_energy, mu):
+        return (out_energy - inc_energy) / constants.BOLTZMANN / self.T
+
+    def amin(self, inc_energy, beta):
+        return (np.sqrt(inc_energy + constants.BOLTZMANN * beta * self.T) - np.sqrt(inc_energy))**2 / self.A / constants.BOLTZMANN / self.T
+    
+    def amax(self, inc_energy, beta):
+        return (np.sqrt(inc_energy + constants.BOLTZMANN * beta * self.T) + np.sqrt(inc_energy))**2 / self.A / constants.BOLTZMANN / self.T
+            
+    def getMu(self, inc_energy, out_energy, alpha):
+        return (inc_energy + out_energy - alpha*self.A*constants.BOLTZMANN*self.T) / 2 / np.sqrt(inc_energy * out_energy)
 
 class MF4AngularDistribution:
     def __init__(self, A, angular_distribution):
@@ -224,12 +268,17 @@ class MF4AngularDistribution:
     def getCumulEnergy(self, inc_energy, area, nsteps):
         en_floor = self._a * inc_energy
         en_ceil = inc_energy
-        en_last = None
-        for en in np.logspace(np.log10(en_floor), np.log10(en_ceil), nsteps):
-            if self.getArea(inc_energy, en_floor, en) > area:
-                break
-            en_last = en
-        return (en + en_last) / 2
+
+        area_max = self.getArea(inc_energy, en_floor, en_ceil)
+        if area >= area_max:
+            return en_ceil
+        if area <= 0:
+            return en_floor
+
+        f = lambda en: self.getArea(inc_energy, en_floor, en) - area
+        q = optimize.root_scalar(f, bracket=(en_floor, en_ceil))
+        
+        return q.root
 
 
     def getEquiAngularBin(self, inc_energy, en_floor, en_ceil, nbin):

@@ -13,7 +13,7 @@ from src.physics import *
 
 
 class CNDL(GendfInterface):
-    def __init__(self, endf, gendf, verbose=False):
+    def __init__(self, endf, gendf, verbose=False, MF7=None):
         super().__init__()
 
         if verbose:
@@ -29,7 +29,7 @@ class CNDL(GendfInterface):
         secondary_unresolved_reactions = []
 
         # compressing GENDF library
-        secondary_unresolved_reactions += self._secondary(verbose)
+        secondary_unresolved_reactions += self._secondary(verbose, MF7)
         self._absorp(secondary_unresolved_reactions)
         if verbose:
             print("All reactions that don't generate secondary particle are merged to MT=27")
@@ -39,7 +39,7 @@ class CNDL(GendfInterface):
             self.reactions[mt].mf = dict(sorted(self.reactions[mt].mf.items(), key=lambda item: item[0]))
         self.reactions = dict(sorted(self.reactions.items(), key=lambda item: item[0]))
         
-    def _secondary(self, verbose):
+    def _secondary(self, verbose, MF7):
         """
             processing all reactions that have any secondary particles
         """
@@ -49,7 +49,7 @@ class CNDL(GendfInterface):
         # elastic scattering. it should be integrated with (MT = 221)
         if 2 in self._gendf.reactions:
             if 221 in self._gendf.reactions:
-                self._scattering(verbose)
+                self._scattering(verbose, MF7)
                 if verbose:
                     print("Low energy thermal scattering is integrated to MT=2")
             else:
@@ -138,14 +138,17 @@ class CNDL(GendfInterface):
 
         return unresolved
 
-    def _scattering(self, verbose):
+    def _scattering(self, verbose, MF7):
         """
             generate elastic scattering (MT = 2) by free-gas thermal scattering law
             and MF4 scattering law
         """
         if verbose:
             print("Generate elastic scattering (MT = 2)")
-            print("by free-gas thermal scattering law and MF4 scattering law")
+            if MF7 is None:
+                print("by free-gas thermal scattering law and MF4 scattering law")
+            else:
+                print("by MF7 tabulated S(a,b) kernel and MF4 scattering law")
         
         self.reactions[2] = Reaction(2)
         self.reactions[2].mf[3] = copy.deepcopy(self._gendf.reactions[2].mf[3])
@@ -172,20 +175,50 @@ class CNDL(GendfInterface):
 
         # get elastic scattering angular distribution
         ad = MF4AngularDistribution(A, self._endf.reactions[2].angular_distribution)
+        ksteps = int(ENV["kernel_steps"])
+        if MF7 is not None: # MF7 S(a,b) kernel mode
+            MF7_mode = True
+            tsk = ThermalScatteringKernel(A, temp, MF7)
+        else:
+            MF7_mode = False
 
         # build energy transition probability map
         for i in tqdm(range(len(energy_mean))):
-            if i < thermal_thres: # thermal scattering (free gas)
-                ts = ThermalScattering2D(A, temp, energy_mean[i], energy_thermal)
-                data_seg = np.zeros((thermal_thres+1, 1))
-                for egroup in range(thermal_thres):
-                    data_seg[egroup + 1, 0] = ts.getProb(self.egn[egroup], self.egn[egroup + 1])
+            if i < thermal_thres: # thermal scattering
+                if MF7_mode: # S(a,b) kernel mode
+                    data_seg = np.zeros((thermal_thres+1, 1))
+                    for egroup in range(thermal_thres):
+                        # get alpha-beta map (linear)
+                        beta_min = tsk.beta(energy_mean[i], self.egn[egroup], None)
+                        beta_max = tsk.beta(energy_mean[i], self.egn[egroup+1], None)
+                        beta_list = np.linspace(beta_min, beta_max, ksteps)
+                        beta_list_mean = (beta_list[1:] + beta_list[:-1]) / 2
+                        amax_list = tsk.amax(energy_mean[i], beta_list_mean)
+                        amin_list = tsk.amin(energy_mean[i], beta_list_mean)
+
+                        bmap = np.expand_dims(beta_list_mean, axis=0)
+                        bmap = np.broadcast_to(bmap, (ksteps-1, ksteps-1))
+                        amap = np.linspace(amin_list, amax_list, ksteps)
+                        area_map = (amap[1:] - amap[:-1]) * (beta_max - beta_min) / ksteps
+                        amap = (amap[1:] + amap[:-1])/2
+
+                        vfunc = np.vectorize(lambda a, b: tsk.get(a, b))
+                        v = vfunc(amap, bmap) * area_map
+
+                        data_seg[egroup + 1, 0] = np.sum(v)
+
+                else: # free gas scattering
+                    ts = ThermalScattering2D(A, temp, energy_mean[i], energy_thermal)
+                    data_seg = np.zeros((thermal_thres+1, 1))
+                    for egroup in range(thermal_thres):
+                        data_seg[egroup + 1, 0] = ts.getProb(self.egn[egroup], self.egn[egroup + 1])
+
                 label += [[len(label), i + 1, 1]]
                 data += [data_seg]
 
             else: # fast neutron elastic scattering
-                #esample = np.logspace(np.log10(self.egn[i]), np.log10(self.egn[i+1]), trans_steps+2)[1:-1]
-                esample = np.linspace(self.egn[i], self.egn[i+1], trans_steps+2)[1:-1]
+                esample = np.logspace(np.log10(self.egn[i]), np.log10(self.egn[i+1]), trans_steps+2)[1:-1]
+                #esample = np.linspace(self.egn[i], self.egn[i+1], trans_steps+2)[1:-1]
                 for j in range(trans_steps):
                     emin = alpha * esample[j]
                     gmin = max(np.argmax(self.egn > emin) - 1, 0)
@@ -226,27 +259,51 @@ class CNDL(GendfInterface):
             for pos, j in enumerate(range(group_start, group_start + target_end - target_start)):
                 equiprob_seg = np.ones((1, nbin + 1), dtype=np.float64)
                 if i < thermal_thres: # thermal scattering (free gas)
-                    ts = ThermalScattering1D(A, temp, energy_mean[i], energy_mean[j])
-                    bin_pointer = 0
-                    prob_last = 0
-                    for mu in np.linspace(-1, 1, equi_steps):
-                        prob = ts.getProb(-1, mu)
-                        while prob > equi_probs[bin_pointer]:
-                            # do linear interpolation
-                            mu_pos = mu_last + (equi_probs[bin_pointer]-prob_last)/(prob-prob_last)*(mu-mu_last)
-                            equiprob_seg[0,bin_pointer] = mu_pos
-                            bin_pointer += 1
+                    if MF7_mode: # S(a,b) kernel mode
+                        beta = tsk.beta(energy_mean[i], energy_mean[j], None)
+                        amax = tsk.amax(energy_mean[i], beta)
+                        amin = tsk.amin(energy_mean[i], beta)
+
+                        alist = np.linspace(amin, amax, equi_steps)
+                        amean = (alist[1:] + alist[:-1]) / 2
+                        # get total area
+                        area = np.empty(amean.shape)
+                        for k in range(len(amean)):
+                            area[k] = tsk.get(amean[k], beta)
+                        
+
+                        area = np.append(0, area)
+                        area_tot = np.sum(area)
+                        interp = interp1d(np.cumsum(area) / area_tot, alist, 2)
+                        area_target = np.linspace(0, 1, nbin+1)[1:-1]
+                        alpha_target = interp.get(area_target)
+                        alpha_target = np.append(amin, alpha_target)
+                        alpha_target = np.append(alpha_target, amax)
+
+                        equiprob_seg = tsk.getMu(energy_mean[i], energy_mean[j], alpha_target)
+                        
+                    else:
+                        ts = ThermalScattering1D(A, temp, energy_mean[i], energy_mean[j])
+                        bin_pointer = 0
+                        prob_last = 0
+                        for mu in np.linspace(-1, 1, equi_steps):
+                            prob = ts.getProb(-1, mu)
+                            while prob > equi_probs[bin_pointer]:
+                                # do linear interpolation
+                                mu_pos = mu_last + (equi_probs[bin_pointer]-prob_last)/(prob-prob_last)*(mu-mu_last)
+                                equiprob_seg[0,bin_pointer] = mu_pos
+                                bin_pointer += 1
+                                if bin_pointer >= nbin + 1:
+                                    break
                             if bin_pointer >= nbin + 1:
                                 break
-                        if bin_pointer >= nbin + 1:
-                            break
 
-                        prob_last = prob
-                        mu_last = mu
-                    pass
+                            prob_last = prob
+                            mu_last = mu
+
                 else: # fast neutron elastic scattering
                     area = self.reactions[2].mf[6].prob_map[target_start + pos,0]
-                    etarget = ad.getCumulEnergy(energy_mean[i], area, 500)
+                    etarget = ad.getCumulEnergy(energy_mean[i], area, 50)
                     equiprob_seg = ad.getEquiAngularBin(energy_mean[i], elast, etarget, nbin)
                     elast = etarget
                 equiprob_data[pointer] = equiprob_seg

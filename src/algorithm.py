@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 from scipy.special import legendre, eval_legendre
 from scipy import interpolate
 
+from src import constants
+
 def legendreToPolynomial(coeff):
     """
         convert legendre coefficient array to polynomial
@@ -18,7 +20,7 @@ def legendreToEquibin(coeff, nbin, mu_min=-1.0, mu_max=1.0):
         equiprobable angle bin distribution
         from mu_min to mu_max
     """
-    if mu_min >= mu_max:
+    if mu_min > mu_max:
         raise ValueError("mu_min must be smaller than mu_max")
         
     poly = legendreToPolynomial(coeff)
@@ -88,7 +90,7 @@ class interp1d:
         elif self._int == 5: # log-log
             self._f = interpolate.interp1d(np.log(x), np.log_y)
         else:
-            raise ValueError("illegal int value")
+            raise ValueError("illegal interpolation law")
     
     def get(self, x):
         if self._int == 2:
@@ -102,6 +104,47 @@ class interp1d:
             log_y = self._f(np.log(x))
             y = np.exp(log_y)
         return y
+
+
+class interp2d:
+    def __init__(self, x, y, z, int):
+        self._int = int
+        if self._int == 2: # linear-linear
+            self._f = interpolate.interp2d(x, y, z)
+        elif self._int == 3: # linear-log
+            # 0 point handling
+            z_copy = np.copy(z)
+            z_copy[z_copy < constants.LOG_MIN] = constants.LOG_MIN
+            self._f = interpolate.interp2d(x, y, np.log(z_copy))
+        elif self._int == 4: # log-linear
+            x_copy = np.copy(x)
+            y_copy = np.copy(y)
+            x_copy[x_copy < constants.LOG_MIN] = constants.LOG_MIN
+            y_copy[y_copy < constants.LOG_MIN] = constants.LOG_MIN
+            self._f = interpolate.interp2d(np.log(x_copy), np.log(y_copy), z)
+        elif self._int == 5: # log-log
+            z_copy = np.copy(z)
+            z_copy[z_copy < constants.LOG_MIN] = constants.LOG_MIN
+            x_copy = np.copy(x)
+            y_copy = np.copy(y)
+            x_copy[x_copy < constants.LOG_MIN] = constants.LOG_MIN
+            y_copy[y_copy < constants.LOG_MIN] = constants.LOG_MIN
+            self._f = interpolate.interp2d(np.log(x_copy), np.log(y_copy), np.log(z_copy))
+        else:
+            raise ValueError("illegal interpolation law")
+
+    def get(self, x, y):
+        if self._int == 2:
+            z = self._f(x, y)
+        elif self._int == 3:
+            log_z = self._f(x, y)
+            z = np.exp(log_z)
+        elif self._int == 4:
+            z = self._f(np.log(x), np.log(y))
+        elif self._int == 5:
+            log_z = self._f(np.log(x), np.log(y))
+            z = np.exp(log_z)
+        return z
 
 
 def getInterpFtnCumulArea(xx, yy, x):

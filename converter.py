@@ -18,7 +18,7 @@ getSetting("settings/stable_isotopes.dat", ISOTOPES)
 
 target_list = os.listdir(ENV["endf_path"])
 
-for target in target_list:
+for target in target_list[219:]:
     # read ENDF file
     endf_data = Evaluation(os.path.join(ENV["endf_path"], target), verbose=False)
     endf_data.read()

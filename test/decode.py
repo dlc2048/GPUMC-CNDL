@@ -18,13 +18,13 @@ os.chdir("..")
 getSetting("settings/setting.txt", ENV)
 
 # import material 4009 binary (Beryllium 9)
-mat = GPUNDL("out/4009.bin")
+mat = GPUNDL("out/101.bin")
 mat.getNeutronEnergyGroup("settings/egn.npy")
 mat.getPhotonEnergyGroup("settings/egg.npy")
 
 # print reactions list
 print(mat.reactions)
-
+"""
 # plot neutron energy distribution of (elastic) and (n,2n) reactions
 # when the group of incident neutron beam is 171 (mean=7.32 MeV)
 mat.plotEnergyDist(2, 6, 171)
@@ -49,3 +49,4 @@ mat.show()
 # when the group of incident neutron beam is 150
 mat.plotGammaSpectrum(102, 150)
 mat.show()
+"""

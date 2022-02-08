@@ -21,7 +21,7 @@ from src.physics import *
 os.chdir("..")
 getSetting("settings/setting.txt", ENV)
 
-mode = "target"
+mode = "list"
 
 if mode == "list":
     target_list_endf = os.listdir(ENV["endf_path"])
