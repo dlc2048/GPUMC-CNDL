@@ -20,6 +20,8 @@ getSettingMul("settings/thermal_setting.txt", THERMAL)
 target_list_thermal = os.listdir(ENV["thermal_path"])
 target_list_endf = os.listdir(ENV["endf_path"])
 
+egn = np.load(ENV["njoy_group"])
+
 for target_thermal in target_list_thermal:
     # read ENDF file
     endf_thermal = Evaluation(os.path.join(ENV["thermal_path"], target_thermal), verbose=False)
@@ -42,44 +44,25 @@ for target_thermal in target_list_thermal:
     if za_target != za_corr:
         raise OSError("No ENDF file of ZA={} ")
 
-    # get S(a,b) kernel data
-    temp = endf_thermal.thermal_inelastic['temperature']
-    lnS = endf_thermal.thermal_inelastic['ln(S)']
-    alpha = endf_thermal.thermal_inelastic['alpha']
-    beta = endf_thermal.thermal_inelastic['beta']
-    table = endf_thermal.thermal_inelastic['scattering_law']
-    symmetric = endf_thermal.thermal_inelastic['symmetric']
-    
-    # interpolating S(a,b) kernel to target temperature
-    temp_target = float(ENV["temperature"])
-    if temp_target < temp[0] - 20 or temp_target > temp[-1] + 20: # tolerance
-        raise ValueError("out of range of S(a,b) kernel temperature lists")
-    if temp_target < temp[0]:
-        table_target = table[:,:,0]
-    elif temp_target > temp[-1]:
-        table_target = table[:,:,-1]
-    else:
-        ind = np.argmax(temp_target < temp)
-        int_law = int(THERMAL[str(za_thermal)][1])
-        ftn = lambda x1, x2, y1, y2, t: interp1d([x1, x2], [y1, y2], int_law).get(t)
-        vfunc = np.vectorize(ftn)
-        table_target = vfunc(temp[ind-1], temp[ind], table[:,:,ind-1], table[:,:,ind], temp_target)
-
-    # build scattering kernel
-    kernel = ScatteringKernel(alpha, beta, table_target, lnS, symmetric)
-
     # njoy data processing
     print("*** NJOY processing ***")
+
+    thermal_mat = int(THERMAL[str(za_thermal)][1])
+    thermal_temp = float(THERMAL[str(za_thermal)][2])
+
     os.makedirs(ENV["njoy_workspace"], exist_ok=True)
     shutil.copy(os.path.join(ENV["endf_path"], target),
                 os.path.join(ENV["njoy_workspace"], ENV["njoy_target"]))
+    shutil.copy(os.path.join(ENV["thermal_path"], target_thermal),
+                os.path.join(ENV["njoy_workspace"], ENV["njoy_kernel"]))
     ninput = NjoyInput(os.path.join(ENV["njoy_workspace"], ENV["njoy_input"]))
     ninput.setEnv(mat, 293.6)
+    ninput.setGroup(egn)
     ninput.moder(20, -21)
     ninput.reconr(-21, -22, 0.0005)
     ninput.broadr(-21, -22, -23, 0.0005)
-    ninput.thermr(0, -23, -24, 1, 0, 0.005, 5)
-    ninput.groupr(-21, -24, -30, 10, 6, 3, 8, 1e7)
+    ninput.thermr(40, -23, -24, thermal_mat, 2, 0, 0.005, 4)
+    ninput.groupr(-21, -24, -30, 1, 6, 7, 9, 1e7)
     ninput.moder(-30, 31)
     ninput.stop()
     ninput.write()
@@ -103,7 +86,7 @@ for target_thermal in target_list_thermal:
     gendf_data = GENDF(os.path.join(ENV["njoy_workspace"], ENV["njoy_GENDF"]))
 
     # convert endf-gendf to cndl structure
-    cndl = CNDL(endf_data, gendf_data, verbose=True, MF7=kernel)
+    cndl = CNDL(endf_data, gendf_data, verbose=True, MF7=int(THERMAL[str(za_thermal)][3]))
     cndl.genEquiProb(verbose=True)
     print("*** WRITE CNDL FILE OF MAT {} ***".format(za_thermal))
     cndl.write(os.path.join("out", "{}.bin".format(za_thermal)), True)

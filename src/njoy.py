@@ -5,15 +5,35 @@ def _joinCard(*args):
     return " " + " ".join(list(map(str, args))) + " /\n"
 
 
+def _joinGroup(arr):
+    out = ""
+    i = 0
+    for data in arr:
+        out += " "
+        out += "{:6e}".format(data)
+        if i == 3:
+            out += "\n"
+            i = 0
+            continue
+        i += 1
+    out += " /\n"
+    return out
+
+
 class NjoyInput:
     def __init__(self, file_name):
         self._file = open(file_name, mode="w")
         self.mat = None
         self.temperature = None
+        self._custom_group = False
 
     def setEnv(self, mat, temperature):
         self.mat = mat
         self.temperature = temperature
+
+    def setGroup(self, egn):
+        self._egn = egn
+        self._custom_group = True
 
     def moder(self, nin, nout):
         # header
@@ -41,12 +61,12 @@ class NjoyInput:
         self._file.write(_joinCard(self.temperature))
         self._file.write(_joinCard(0))
 
-    def thermr(self, nendf, nin, nout, iin, icoh, tol, emax):
+    def thermr(self, nendf, nin, nout, kernel_mat, iin, icoh, tol, emax):
         # header
         self._file.write("thermr\n")
         # cards
-        self._file.write(_joinCard(0, nin, nout))
-        self._file.write(_joinCard(0, self.mat, 10, 1,
+        self._file.write(_joinCard(nendf, nin, nout))
+        self._file.write(_joinCard(kernel_mat, self.mat, 10, 1,
                                    iin, icoh, 0, 1, 221, 1))
         self._file.write(_joinCard(self.temperature))
         self._file.write(_joinCard(tol, emax))
@@ -60,6 +80,9 @@ class NjoyInput:
         self._file.write(_joinCard("'group structure of " + str(self.mat) + "'"))
         self._file.write(_joinCard(self.temperature))
         self._file.write(_joinCard(sigz))
+        if self._custom_group:
+            self._file.write(_joinCard(len(self._egn) - 1))
+            self._file.write(_joinGroup(self._egn))
         # target reactions
         self._file.write(_joinCard(3))
         self._file.write(_joinCard(3, 221))

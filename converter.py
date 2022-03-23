@@ -18,7 +18,9 @@ getSetting("settings/stable_isotopes.dat", ISOTOPES)
 
 target_list = os.listdir(ENV["endf_path"])
 
-for target in target_list[219:]:
+egn = np.load(ENV["njoy_group"])
+
+for target in target_list:
     # read ENDF file
     endf_data = Evaluation(os.path.join(ENV["endf_path"], target), verbose=False)
     endf_data.read()
@@ -36,11 +38,12 @@ for target in target_list[219:]:
                 os.path.join(ENV["njoy_workspace"], ENV["njoy_target"]))
     ninput = NjoyInput(os.path.join(ENV["njoy_workspace"], ENV["njoy_input"]))
     ninput.setEnv(mat, 293.6)
+    ninput.setGroup(egn)
     ninput.moder(20, -21)
     ninput.reconr(-21, -22, 0.0005)
     ninput.broadr(-21, -22, -23, 0.0005)
-    ninput.thermr(0, -23, -24, 1, 0, 0.005, 5)
-    ninput.groupr(-21, -24, -30, 10, 6, 3, 8, 1e7)
+    ninput.thermr(0, -23, -24, 0, 1, 0, 0.005, 4)
+    ninput.groupr(-21, -24, -30, 1, 6, 7, 8, 1e7)
     ninput.moder(-30, 31)
     ninput.stop()
     ninput.write()

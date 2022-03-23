@@ -1,5 +1,5 @@
 * thermal scattering ENDF interpolation law
 * and related free-gas ENDF ZA code
-* thermal ZA	free gas ZA	T interp law
-101		1001		4
-126		4009		4
+* thermal ZA	free gas ZA	material id	temperature	# per molecule
+101		1001		1		293.6		2
+126		4009		26		300.0		1

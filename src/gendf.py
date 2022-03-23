@@ -2,6 +2,7 @@ from copy import deepcopy
 
 import numpy as np
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 from matplotlib.colors import LogNorm
 from scipy.special import eval_legendre
 
@@ -53,6 +54,8 @@ class MF6Like:
             self.target_tape[group] = [len(self.prob_map), target]
             self.prob_map = np.append(self.prob_map, data[data_index][1:], axis=0)
 
+        # check minus
+        self.prob_map[self.prob_map[:,0] < 0, 0] = float(ENV["negative_delta"])
         # set cumulative density function
         self.prob_map = np.pad(self.prob_map, [(0,0), (1,0)], mode='constant')
         target_temp = np.append(self.target_tape[:,0], len(self.prob_map))
@@ -159,7 +162,7 @@ class MF6Like:
         self.equiprob_map = np.empty((len(self.prob_map), nbin + 2), dtype=np.float64)
         self.equiprob_map[:,0] = np.copy(self.prob_map[:,0])
         modifier = (np.arange(0, self.prob_map.shape[1] - 1, 1) * 2 + 1) / 2
-        for i in range(len(self.equiprob_map)):
+        for i in tqdm(range(len(self.equiprob_map))):
             self.equiprob_map[i,1:] = legendreToEquibin(self.prob_map[i,1:] * modifier, nbin)[0]
 
 class MF16:
@@ -277,6 +280,11 @@ class MF16:
             self.target_tape[group,2] = floor[group]
             # set prob map
             seg = matrix[group,floor[group]:ceil[group]]
+            if len(seg) == 0:
+                self.target_tape[group, 0] = -1
+                self.target_tape[group, 1] = 0
+                self.target_tape[group, 2] = -1
+                continue
             seg = np.cumsum(seg)
             seg /= seg[-1]
             self.prob_map = np.append(self.prob_map, seg)

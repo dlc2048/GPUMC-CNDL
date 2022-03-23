@@ -1,12 +1,15 @@
 endf_path		endf/n
 thermal_path		endf/kernel
-endf_target		n_0425_4-Be-9.dat
+endf_target		n_0528_5-B-11.dat
 njoy_executable	/home/dlc2048/NJOY21/bin/njoy21
 njoy_workspace		NJOY
+njoy_group		settings/egn.npy
 njoy_input		input
 njoy_output		output
 njoy_target		tape20
+njoy_kernel		tape40
 njoy_GENDF		tape31
+negative_delta  1e-8
 res_merge_nsample	20000
 equiprob_nbin		32
 enetrans_steps		50
