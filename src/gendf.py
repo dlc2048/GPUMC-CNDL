@@ -23,6 +23,15 @@ class MF6Like:
     def __init__(self, data, label, ngroup, mf):
         self._mf = mf
         self.equiprob_map = None
+        # alias_table
+        self.target_tape_alias = None
+        self.prob_map_alias = None
+        self.index_map_alias = None
+
+        is_const = False # constant spectrum flag
+        const_floor = None # lowest energy group of constant spectrum 
+        const_target_index = None # constant spectrum target index (floor)
+        const_target_ceil = None # constant spectrum target index (ceil)
         if len(data) == 0:
             self.target_tape = None
             self.prob_map = None
@@ -44,15 +53,28 @@ class MF6Like:
             prob_map[n,1:] = Legendre polynomial coefficient (angular distribution)
         """
 
-        for data_index, group, target in label:
-            # change group structure from ENDF (lowest=1) to Python (lowest=0)
-            group -= 1
-            target -= 1
-            # set target tape
-            if np.sum(data[data_index][1:]) == 0:
-                continue
-            self.target_tape[group] = [len(self.prob_map), target]
-            self.prob_map = np.append(self.prob_map, data[data_index][1:], axis=0)
+        for data_index, group, floor in label:
+            if group == 0: # constant spectrum mod is activated, read constant spectrum
+                is_const = True
+                const_floor = floor
+                const_target_index = len(self.prob_map)
+                self.prob_map = np.append(self.prob_map, data[data_index], axis=0)
+                const_target_ceil = len(self.prob_map)
+            elif floor == 0: # constant spectrum mod is activated, use constant spectrum
+                if is_const == False:
+                    raise SyntaxError
+                self.target_tape[group-1] = [const_target_index, const_floor]
+            else: # constant spectrum mod is deactivated, read spectrum
+                if is_const == True:
+                    is_const = False
+                # change group structure from ENDF (lowest=1) to Python (lowest=0)
+                group -= 1
+                floor -= 1
+                # set target tape
+                if np.sum(data[data_index][1:]) == 0:
+                    continue
+                self.target_tape[group] = [len(self.prob_map), floor]
+                self.prob_map = np.append(self.prob_map, data[data_index][1:], axis=0)
 
         # check minus
         self.prob_map[self.prob_map[:,0] < 0, 0] = float(ENV["negative_delta"])
@@ -78,6 +100,16 @@ class MF6Like:
             else:
                 target_cum /= target_cum[-1]
             self.prob_map[target_temp[i]:target_temp[ti],0] = target_cum
+        
+        # constant spectrum
+        if const_target_index is not None:
+            target_cum = self.prob_map[const_target_index:const_target_ceil,1]
+            target_cum = np.cumsum(target_cum)
+            if target_cum[-1] == 0: # no information
+                target_cum = np.ones(target_cum.shape)
+            else:
+                target_cum /= target_cum[-1]
+            self.prob_map[const_target_index:const_target_ceil,0] = target_cum
 
         # normalize legendre polynomials
         divider = np.broadcast_to(np.expand_dims(self.prob_map[:,1], axis=1), self.prob_map[:,1:].shape)
@@ -103,10 +135,16 @@ class MF6Like:
         else:
             raise ValueError("unexpected MF value")
 
-    def _getTransMatrix(self):
+    def getTransMatrix(self):
         """
             get group-to-group transition probability matrix
         """
+        if self.index_map_alias is None:
+            return self._getTransMatrixFromCumul()
+        else:
+            return self._getTransMatrixFromAlias()
+
+    def _getTransMatrixFromCumul(self):
         matrix = np.zeros((self.target_tape.shape[0], self.target_tape.shape[0], self.prob_map.shape[1]), dtype=np.float64)
         for i in range(len(self.target_tape)):
             if self.target_tape[i,0] < 0:
@@ -132,6 +170,25 @@ class MF6Like:
 
         return matrix
 
+    def _getTransMatrixFromAlias(self):
+        matrix = np.zeros((self.target_tape_alias.shape[0], self.target_tape_alias.shape[0], self.prob_map_alias.shape[1]), dtype=np.float64)
+        for i in range(len(self.target_tape_alias)):
+            if self.target_tape_alias[i,0] < 0:
+                continue
+            target_begin = self.target_tape_alias[i,0]
+            target_len = self.target_tape_alias[i,2]
+            target_group = self.target_tape_alias[i,1]
+            alias_map_seg = np.copy(self.prob_map_alias[target_begin:target_begin+target_len])
+            alias_index_seg = np.copy(self.index_map_alias[target_begin:target_begin+target_len])
+
+            alias_map_seg[:,0] = probFromAlias(alias_map_seg[:,0], alias_index_seg)
+
+            # set matrix element of i-th incident group
+            matrix[i,target_group:target_group+target_len] = alias_map_seg
+        
+        return matrix
+
+
     def setFromMatrix(self, matrix):
         """
             set prob map and target tape from transition probability matrix
@@ -154,20 +211,76 @@ class MF6Like:
 
         return
 
-    def genEquiProbMap(self):
+    def genEquiProbMap(self, alias=False):
         """
             convert Legendre distribution to equiprobable distribution
         """
         nbin = int(ENV["equiprob_nbin"])
-        self.equiprob_map = np.empty((len(self.prob_map), nbin + 2), dtype=np.float64)
-        self.equiprob_map[:,0] = np.copy(self.prob_map[:,0])
-        modifier = (np.arange(0, self.prob_map.shape[1] - 1, 1) * 2 + 1) / 2
+        
+        if alias:
+            target_prob_map = self.prob_map_alias
+        else:
+            target_prob_map = self.prob_map
+        
+        self.equiprob_map = np.empty((len(target_prob_map), nbin + 2), dtype=np.float64)
+        self.equiprob_map[:,0] = np.copy(target_prob_map[:,0])
+        modifier = (np.arange(0, target_prob_map.shape[1] - 1, 1) * 2 + 1) / 2
         for i in tqdm(range(len(self.equiprob_map))):
-            self.equiprob_map[i,1:] = legendreToEquibin(self.prob_map[i,1:] * modifier, nbin)[0]
+            self.equiprob_map[i,1:] = legendreToEquibin(target_prob_map[i,1:] * modifier, nbin)[0]
+
+    def setAliasTable(self):
+        """
+            generate alias sampling table
+        """
+        # set alias target tape
+        target_tape_alias = np.pad(self.target_tape, ((0,0), (0, 1)))
+
+        target_unique = np.unique(target_tape_alias[:,0])
+        target_unique = target_unique[target_unique >= 0]
+        target_unique = np.sort(target_unique)
+        target_unique = np.append(target_unique, len(self.prob_map))
+
+        # set alias target length
+        for group in range(len(target_tape_alias)):
+            target_from = target_tape_alias[group, 0]
+            if target_from < 0:
+                continue
+            unique_ind = np.where(target_unique == target_from)[0][0]
+            target_len = target_unique[unique_ind + 1] - target_unique[unique_ind]
+            target_tape_alias[group, 2] = target_len
+
+        # set alias prob map
+        prob_map_alias = np.copy(self.prob_map)
+        index_map_alias = np.empty(len(self.prob_map), dtype=np.int32)
+
+        # get probability
+        for i in range(len(target_unique) - 1):
+            target_from = target_unique[i]
+            target_to = target_unique[i+1]
+            prob = prob_map_alias[target_from:target_to, 0]
+            if len(prob) > 1:
+                prob[1:] -= prob[:-1]
+
+            domain = np.arange(target_to - target_from)
+            
+            alias_t = AliasTable(domain, prob)
+            prob_map_alias[target_from:target_to, 0] = alias_t.getProbTable()
+            index_map_alias[target_from:target_to] = alias_t.getAliasTable()
+
+        self.prob_map_alias = prob_map_alias
+        self.target_tape_alias = target_tape_alias
+        self.index_map_alias = index_map_alias
+
 
 class MF16:
     def __init__(self, data, label, ngroup, xs):
         self.equiprob_map = None
+
+        # alias_table
+        self.target_tape_alias = None
+        self.prob_map_alias = None
+        self.index_map_alias = None
+
         is_const = False # constant spectrum flag
         const_floor = None # lowest energy group of constant spectrum 
         const_target_index = None # constant spectrum target index
@@ -227,11 +340,21 @@ class MF16:
     def __repr__(self):
         return "photon multiplication and spectrum"
 
-    def _getMultiplicity(self):
-        mul_encoded = self.target_tape[:,1].tobytes()
+    def getMultiplicity(self):
+        if self.index_map_alias is None:
+            target = self.target_tape
+        else:
+            target = self.target_tape_alias
+        mul_encoded = target[:,1].tobytes()
         return np.frombuffer(mul_encoded, dtype=np.float32)
 
-    def _getSpectrum(self, group):
+    def getSpectrum(self, group):
+        if self.index_map_alias is None:
+            return self._getSpectrumFromCumul(group)
+        else:
+            return self._getSpectrumFromAlias(group)
+
+    def _getSpectrumFromCumul(self, group):
         target, mul_int32, floor = self.target_tape[group]
         if floor == -1:
             return None
@@ -243,10 +366,28 @@ class MF16:
         prob[1:] -= prob[:-1]
         return np.pad(prob, (floor,0)) * multiplicity
 
-    def _getTransMatrix(self, ngg):
+    def _getSpectrumFromAlias(self, group):
+        target, mul_int32, floor, target_len = self.target_tape_alias[group]
+        if floor == -1:
+            return None
+        # get multiplicity
+        mul_encoded = np.array([mul_int32], dtype=np.int32).tobytes()
+        multiplicity = np.frombuffer(mul_encoded, dtype=np.float32)[0]
+        target_to = target + target_len
+        prob = np.copy(self.prob_map_alias[target:target_to])
+        prob = probFromAlias(prob, self.index_map_alias[target:target_to])
+        return np.pad(prob, (floor,0)) * multiplicity
+
+    def getTransMatrix(self, ngg):
         """
             get neutron group to photon group transition probability matrix
         """
+        if self.index_map_alias is None:
+            return self._getTransMatrixFromCumul(ngg)
+        else:
+            return self._getTransMatrixFromAlias(ngg)
+
+    def _getTransMatrixFromCumul(self, ngg):
         matrix = np.zeros((self.target_tape.shape[0], ngg), dtype=np.float64)
         for group in range(len(self.target_tape)):
             target, mul_int32, floor = self.target_tape[group]
@@ -255,6 +396,17 @@ class MF16:
             target_to = np.argmax(self.prob_map[target:] == 1.e0) + 1 + target
             prob = np.copy(self.prob_map[target:target_to])
             prob[1:] -= prob[:-1]
+            matrix[group] = np.pad(prob, (floor,ngg-floor-len(prob)))
+        return matrix
+
+    def _getTransMatrixFromAlias(self, ngg):
+        matrix = np.zeros((self.target_tape_alias.shape[0], ngg), dtype=np.float64)
+        for group in range(len(self.target_tape_alias)):
+            target_from, mul_int32, floor, target_len = self.target_tape_alias[group]
+            if floor < 0:
+                continue
+            prob = np.copy(self.prob_map_alias[target_from:target_from+target_len])
+            prob = probFromAlias(prob, self.index_map_alias[target_from:target_from+target_len])
             matrix[group] = np.pad(prob, (floor,ngg-floor-len(prob)))
         return matrix
 
@@ -290,6 +442,50 @@ class MF16:
             self.prob_map = np.append(self.prob_map, seg)
         return
 
+    def setAliasTable(self):
+        """
+            generate alias sampling table
+        """
+        # set alias target tape
+        target_tape_alias = np.pad(self.target_tape, ((0,0), (0, 1)))
+
+        target_unique = np.unique(target_tape_alias[:,0])
+        target_unique = target_unique[target_unique >= 0]
+        target_unique = np.sort(target_unique)
+        target_unique = np.append(target_unique, len(self.prob_map))
+
+        # set alias target length
+        for group in range(len(target_tape_alias)):
+            target_from = target_tape_alias[group, 0]
+            if target_from < 0:
+                continue
+            unique_ind = np.where(target_unique == target_from)[0][0]
+            target_len = target_unique[unique_ind + 1] - target_unique[unique_ind]
+            target_tape_alias[group, 3] = target_len
+
+        # set alias prob map
+        prob_map_alias = np.copy(self.prob_map)
+        index_map_alias = np.empty(len(self.prob_map), dtype=np.int32)
+
+        # get probability
+        for i in range(len(target_unique) - 1):
+            target_from = target_unique[i]
+            target_to = target_unique[i+1]
+            prob = prob_map_alias[target_from:target_to]
+            if len(prob) > 1:
+                prob[1:] -= prob[:-1]
+
+            domain = np.arange(target_to - target_from)
+            
+            alias_t = AliasTable(domain, prob)
+            prob_map_alias[target_from:target_to] = alias_t.getProbTable()
+            index_map_alias[target_from:target_to] = alias_t.getAliasTable()
+
+        self.prob_map_alias = prob_map_alias
+        self.target_tape_alias = target_tape_alias
+        self.index_map_alias = index_map_alias
+
+
 class Reaction:
     def __init__(self, mt):
         self.mt = mt
@@ -317,7 +513,7 @@ class Reaction:
 
 
 class GendfInterface:
-    def __init__(self):
+    def __init__(self, alias=False):
         self.egn = None
         self.egg = None
 
@@ -327,6 +523,9 @@ class GendfInterface:
 
         # reaction list
         self.reactions = {}
+
+        # alias sampling flag
+        self._is_alias = alias
 
     def show(self):
         """
@@ -354,7 +553,7 @@ class GendfInterface:
         plt.ylabel("Cross-section (barn)")
         self._legend += [self.reactions[mt]]
 
-    def plotTransitionMatrix(self, mt): # type = 1
+    def plotTransitionMatrix(self, mt, mf): # type = 1
         """
             plot energy group transition probability matrix
         """
@@ -362,8 +561,11 @@ class GendfInterface:
             self._plot_type = 1
         elif self._plot_type != 1:
             raise TypeError
-        
-        plt.imshow(self.reactions[mt].mf[6]._getTransMatrix()[:,:,0], 
+
+        if mf not in (6, 21):
+            raise TypeError("MF value must be 6 or 21")
+
+        plt.imshow(self.reactions[mt].mf[mf].getTransMatrix()[:,:,0], 
                    cmap="jet", origin="lower", norm=LogNorm())
         plt.title("{} transition matrix".format(self.reactions[mt].__repr__()))
         plt.xlabel("energy group index of exit particle")
@@ -382,7 +584,7 @@ class GendfInterface:
         elif self._plot_type != 2:
             raise TypeError
 
-        matrix = np.transpose(self.reactions[mt].mf[mf]._getTransMatrix()[:,:,0])
+        matrix = np.transpose(self.reactions[mt].mf[mf].getTransMatrix()[:,:,0])
         data = matrix[:,inc_group]
         plt.step(self.egn[:-1] * 1e-6, data / (self.egn[1:] - self.egn[:-1]) * 1e6 , where='post')
         plt.title("material {}, energy distribution of secondary".format(self.za))
@@ -461,7 +663,7 @@ class GendfInterface:
         elif self._plot_type != 3:
             raise TypeError     
 
-        plt.step(self.egn[:-1] * 1e-6, self.reactions[mt].mf[16]._getMultiplicity(),
+        plt.step(self.egn[:-1] * 1e-6, self.reactions[mt].mf[16].getMultiplicity(),
                  where='post')
         plt.title("material {}, gamma multiplicity".format(self.za))
         plt.xscale("log")
@@ -478,8 +680,8 @@ class GendfInterface:
         elif self._plot_type != 4:
             raise TypeError   
 
-        spectrum = self.reactions[mt].mf[16]._getTransMatrix(len(self.egg)-1)[inc_group]
-        spectrum *= self.reactions[mt].mf[16]._getMultiplicity()[inc_group]
+        spectrum = self.reactions[mt].mf[16].getTransMatrix(len(self.egg)-1)[inc_group]
+        spectrum *= self.reactions[mt].mf[16].getMultiplicity()[inc_group]
 
         plt.step(self.egg[:-1] * 1e-6, spectrum * 100, where='post') 
         plt.title("material {}, gamma spectrum".format(self.za))  
@@ -492,8 +694,8 @@ class GendfInterface:
         self._legend += [_legend]
 
     def getGammaMeanEnergy(self, mt, inc_group):
-        spectrum = self.reactions[mt].mf[16]._getTransMatrix(len(self.egg)-1)[inc_group]
-        spectrum *= self.reactions[mt].mf[16]._getMultiplicity()[inc_group]
+        spectrum = self.reactions[mt].mf[16].getTransMatrix(len(self.egg)-1)[inc_group]
+        spectrum *= self.reactions[mt].mf[16].getMultiplicity()[inc_group]
         if np.sum(spectrum) == 0:
             return 0 
 
@@ -502,7 +704,7 @@ class GendfInterface:
         return np.sum(spectrum * egg_energy)
     
     def getHadronMeanEnergy(self, mt, mf, inc_group):
-        spectrum = self.reactions[mt].mf[mf]._getTransMatrix()[inc_group,:,0]
+        spectrum = self.reactions[mt].mf[mf].getTransMatrix()[inc_group,:,0]
         vfunc = np.vectorize(logMean)
         neu_energy = vfunc(self.egn[1:], self.egn[:-1])
         return np.sum(spectrum * neu_energy)

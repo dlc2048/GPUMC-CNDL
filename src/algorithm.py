@@ -171,6 +171,62 @@ def getInterpFtnCumulValue(xx, yy, area):
         x = a/yy[target_index] + xx[target_index]
     return x
 
+class AliasTable:
+    def __init__(self, domain, prob):
+        self._domain = domain
+        self._alias_table = np.empty(domain.shape, dtype=np.int32)
+        self._prob_table = np.copy(prob)
+        prob_tag = np.ones(prob.shape, dtype=np.bool)
+
+        mean = np.sum(prob) / len(prob)
+        # set alias table
+        for i in range(len(prob) - 1):
+            lower = np.where((self._prob_table < mean) * prob_tag)[0]
+            upper = np.where((self._prob_table > mean) * prob_tag)[0]
+
+            if len(lower) == 0 or len(upper) == 0:
+                continue
+
+            target_low = lower[0]
+            target_up = upper[0]
+
+            aux = mean - self._prob_table[target_low]
+            self._prob_table[target_up] -= aux
+            self._prob_table[target_low] /= mean
+            self._alias_table[target_low] = target_up
+
+            prob_tag[target_low] = False
+
+        self._prob_table[prob_tag] = 1
+
+    def sampling(self):
+        rand = np.random.random()
+        aj = rand * len(self._domain)
+        j = int(aj)
+        aj -= j
+        if aj > self._prob_table[j]:
+            j = self._alias_table[j]
+        return j
+
+    def getProbTable(self):
+        return self._prob_table
+
+    def getAliasTable(self):
+        return self._alias_table
+
+def probFromAlias(alias_table, alias_index):
+    prob = np.zeros(alias_table.shape)
+    mean = 1 / len(alias_table)
+    for i in range(len(alias_table)):
+        if alias_table[i] == 1:
+            prob[i] += mean
+        else:
+            target = alias_index[i]
+            prob[target] += mean * (1.e0 - alias_table[i])
+            prob[i] += mean * alias_table[i]
+    
+    return prob
+
 
 if __name__ == "__main__":
     """

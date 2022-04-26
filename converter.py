@@ -68,8 +68,8 @@ for target in target_list:
     gendf_data = GENDF(os.path.join(ENV["njoy_workspace"], ENV["njoy_GENDF"]))
 
     # convert endf-gendf to cndl structure
-
     cndl = CNDL(endf_data, gendf_data, verbose=True)
-    cndl.genEquiProb(verbose=True)
+    cndl.genAliasTable(verbose=True)
+    cndl.genEquiProb(verbose=True, alias=True)
     print("*** WRITE CNDL FILE OF MAT {} ***".format(za))
-    cndl.write(os.path.join("out", "{}.bin".format(cndl.za)), True)
+    cndl.write(os.path.join("out", "{}.bin".format(cndl.za)), get_reactions_list=True, alias=True)

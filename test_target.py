@@ -25,9 +25,8 @@ endf_data = Evaluation(os.path.join(ENV["endf_path"], ENV["endf_target"]), verbo
 endf_data.read()
 mat = endf_data.material
 temp = float(ENV["temperature"])
-    
-# njoy data processing
 
+# njoy data processing
 print("*** NJOY processing ***")
 os.makedirs(ENV["njoy_workspace"], exist_ok=True)
 shutil.copy(os.path.join(ENV["endf_path"], ENV["endf_target"]),
@@ -63,10 +62,9 @@ os.chdir("..")
 print("*** READ GENDF FILE ***")
 gendf_data = GENDF(os.path.join(ENV["njoy_workspace"], ENV["njoy_GENDF"]))
 # convert endf-gendf to cndl structure
-
 cndl = CNDL(endf_data, gendf_data, verbose=True)
-
-cndl.genEquiProb(verbose=True)
+cndl.genAliasTable(verbose=True)
+cndl.genEquiProb(verbose=True, alias=True)
 print("*** WRITE CNDL FILE OF MAT {} ***".format(cndl.za))
-cndl.write(os.path.join("out", "{}.bin".format(cndl.za)), True)
+cndl.write(os.path.join("out", "{}.bin".format(cndl.za)), get_reactions_list=True, alias=True)
 

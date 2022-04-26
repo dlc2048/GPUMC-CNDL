@@ -38,6 +38,11 @@ class CNDL(GendfInterface):
         for mt in self.reactions:
             self.reactions[mt].mf = dict(sorted(self.reactions[mt].mf.items(), key=lambda item: item[0]))
         self.reactions = dict(sorted(self.reactions.items(), key=lambda item: item[0]))
+
+        # check the integrity of MF 27 data
+        for mt in self.reactions:
+            if 27 in self.reactions[mt].mf:
+                self._checkResNucIntegrity(mt)
         
     def _secondary(self, verbose, MF7):
         """
@@ -222,7 +227,7 @@ class CNDL(GendfInterface):
                 continue
             matrix = np.zeros((ngn, ngn, order), dtype=np.float64)
             for gendf_mt in target_reaction:
-                seg = self._gendf.reactions[gendf_mt].mf[gendf_mf]._getTransMatrix()
+                seg = self._gendf.reactions[gendf_mt].mf[gendf_mf].getTransMatrix()
                 gmin = np.argmax(self._gendf.reactions[gendf_mt].mf[3].xs > 0)
                 mul = self._gendf.reactions[gendf_mt].mf[3].xs[gmin:]
                 mul = np.expand_dims(mul, axis=1)
@@ -256,8 +261,8 @@ class CNDL(GendfInterface):
             mul = self._gendf.reactions[gendf_mt].mf[3].xs
             xs_tot += mul
             if gendf_mf in self._gendf.reactions[gendf_mt].mf:
-                seg = self._gendf.reactions[gendf_mt].mf[gendf_mf]._getTransMatrix(ngg)
-                mul *= self._gendf.reactions[gendf_mt].mf[gendf_mf]._getMultiplicity()
+                seg = self._gendf.reactions[gendf_mt].mf[gendf_mf].getTransMatrix(ngg)
+                mul *= self._gendf.reactions[gendf_mt].mf[gendf_mf].getMultiplicity()
                 mul = np.expand_dims(mul, axis=1)
                 matrix += seg * np.broadcast_to(mul, matrix.shape)
 
@@ -370,7 +375,7 @@ class CNDL(GendfInterface):
                 if xs == 0:
                     continue
                 if 16 in self._gendf.reactions[mt].mf.keys(): # photon is generated
-                    spectrum = self._gendf.reactions[mt].mf[16]._getSpectrum(egroup)
+                    spectrum = self._gendf.reactions[mt].mf[16].getSpectrum(egroup)
                     if spectrum is None:
                         continue
                     spectrum = np.pad(spectrum, (0,len(edist) - len(spectrum)))
@@ -389,7 +394,41 @@ class CNDL(GendfInterface):
         if len(data) > 0:
             self.reactions[27].mf[16] = MF16(data, label, len(self.egn)-1, self.reactions[27].mf[3].xs)
 
-    def genEquiProb(self, verbose=False):
+    def _checkResNucIntegrity(self, mt):
+        reaction = self.reactions[mt]
+        target_tape = reaction.mf[27].target_tape
+        prob_map = reaction.mf[27].prob_map
+
+        if np.sum(target_tape[:,0] >= 0) == 0:
+            del reaction.mf[27]
+            return
+
+        """
+        target_group = np.where(reaction.mf[3].xs > 0)[0]
+
+        data_to_insert = np.zeros((1,prob_map.shape[1]), dtype=np.float64)
+        data_to_insert[0,0] = 1.0e0
+        data_to_insert[0,1] = 1.0e0
+
+        for group in target_group:
+            if reaction.mf[27].target_tape[group, 0] == -1: # mismatched res-nuc dose data
+                first_nonzero = np.argmax(target_tape[group:, 0] > -1)
+                if first_nonzero:
+                    target_position = target_tape[group+first_nonzero, 0]
+                else:
+                    target_position = len(reaction.mf[27].prob_map)
+                
+                target_tape[group, 0] = target_position
+                target_tape[group, 1] = 0 # minimum energy
+                prob_map = np.insert(prob_map, target_position, data_to_insert, axis=0)
+
+                target_next = target_tape[group+1:,0]
+                if len(target_next) == 0:
+                    continue
+                target_next[target_next > -1] += 1
+        """
+
+    def genEquiProb(self, verbose=False, alias=False):
         """
             generate equiprob angular distribution
         """
@@ -397,21 +436,24 @@ class CNDL(GendfInterface):
             print("*** GENERATE EQUIPROB ANGULAR DISTRIBUTION ***")
         for mt in self.reactions:
             if mt == 2: # elastic scattering. It follows different equiprob cosine generating scheme.
-                self._genElasticEquiProb() # generate equiprobable map
+                self._genElasticEquiProb(alias) # generate equiprobable map
                 if verbose:
                     print("MT={} {}, MF={} is converted to equiprob map".format(mt, self.reactions[mt].__repr__(), 6))
             else:
                 for mf in self.reactions[mt].mf:
-                    if mf not in (3,16,26,27):
-                        self.reactions[mt].mf[mf].genEquiProbMap()
+                    if mf in (6, 21):
+                        self.reactions[mt].mf[mf].genEquiProbMap(alias)
                         if verbose:
                             print("MT={} {}, MF={} is converted to equiprob map".format(mt, self.reactions[mt].__repr__(), mf))
 
-    def _genElasticEquiProb(self):
+    def _genElasticEquiProb(self, alias):
         nbin = int(ENV["equiprob_nbin"])
         target = self.reactions[2].mf[6]
         target.equiprob_map = np.empty((len(target.prob_map), nbin + 2), dtype=np.float64)
-        target.equiprob_map[:,0] = np.copy(target.prob_map[:,0])
+        if alias:
+            target.equiprob_map[:,0] = np.copy(target.prob_map_alias[:,0])
+        else:
+            target.equiprob_map[:,0] = np.copy(target.prob_map[:,0])
         modifier = (np.arange(0, target.prob_map.shape[1] - 1, 1) * 2 + 1) / 2
         thermal_thres = np.argmax(self._gendf.reactions[221].mf[6].target_tape[:,0] < 0)
         
@@ -431,7 +473,6 @@ class CNDL(GendfInterface):
         for i in tqdm(range(thermal_thres, len(target.target_tape))):
             target_start, group_start = target.target_tape[i]
             emin = alpha * energy_mean[i]
-            emax = energy_mean[i]
             elast = emin
 
             if i == len(target.target_tape) - 1:
@@ -449,10 +490,30 @@ class CNDL(GendfInterface):
                 target.equiprob_map[pointer,1:] = eb
                 pointer += 1
 
-    def write(self, file_name, get_reactions_list=False):
+    def genAliasTable(self, verbose=False):
+        """
+            generate alias sampling table
+        """        
+        if verbose:
+            print("*** GENERATE ALIAS TABLE ***")
+
+        for mt in self.reactions: 
+            # for all reactions, build alias sampling table
+            for mf in (27, 16, 6, 21):
+                if mf in self.reactions[mt].mf:
+                    self.reactions[mt].mf[mf].setAliasTable()
+        
+        
+    def write(self, file_name, get_reactions_list=False, alias=False):
         """
             write binary file of GPUMC compressed neutron data library
         """
+        if alias:
+            self._writeAlias(file_name, get_reactions_list)
+        else:
+            self._writeCumul(file_name, get_reactions_list)
+
+    def _writeCumul(self, file_name, get_reactions_list):
         file = NdlBinary(file_name, mode="w")
         reactions_list = np.empty(0, dtype=np.int32) # for debugging
         # generate reaction cumulative probability map
@@ -517,4 +578,80 @@ class CNDL(GendfInterface):
                 file.write(self.reactions[mt].mf[21].target_tape)
                 file.write(self.reactions[mt].mf[21].equiprob_map.astype(np.float32))                
         file.close()
-        
+
+    def _writeAlias(self, file_name, get_reactions_list):
+        file = NdlBinary(file_name, mode="w")
+        reactions_list = np.empty(0, dtype=np.int32) # for debugging
+        # generate reaction probability map
+        reaction_prob_map = np.empty((len(self.egn) - 1, len(self.reactions)), dtype=np.float64)
+        reaction_alias_map = np.empty(reaction_prob_map.shape, dtype=np.int32)
+        for i, mt in enumerate(self.reactions):
+            reaction_prob_map[:,i] = self.reactions[mt].mf[3].xs
+            reactions_list = np.append(reactions_list, mt)
+        total_xs = np.sum(reaction_prob_map, axis=1)
+        reaction_prob_map /= np.expand_dims(total_xs, axis=1)
+        # save ZA and atomic mass
+        file.write(np.array([self.za], dtype=np.int32))
+        file.write(np.array([self._endf.target['mass']], dtype=np.float32))
+        # save total cross section
+        file.write(total_xs.astype(np.float32))
+        # save reactions MT list
+        if get_reactions_list:
+            file.write(reactions_list.astype(np.int32))
+        # build alias table
+        for group in range(len(self.egn) - 1):
+            domain = np.arange(len(self.reactions))
+            alias_t = AliasTable(domain, reaction_prob_map[group])
+            reaction_alias_map[group] = alias_t.getAliasTable()
+            reaction_prob_map[group] = alias_t.getProbTable()
+        # save reaction type sampling alias map
+        file.write(reaction_prob_map.astype(np.float32))
+        file.write(reaction_alias_map.astype(np.int32))
+        for mt in self.reactions: 
+            # for all reactions, build sampling law card
+            # always this order: [res_dose, gamma, hadron1, hadron2, ...]
+            # sampling law card structure [pid, pointer, pid, pointer, ...]
+            n = 0
+            sampling_law = np.empty(0, dtype=np.int32)
+            # check res dose
+            if 27 in self.reactions[mt].mf:
+                sampling_law = np.append(sampling_law, [27, n])
+                n += 1
+            else:
+                sampling_law = np.append(sampling_law, [27, -1])
+            # check gamma
+            if 16 in self.reactions[mt].mf:
+                sampling_law = np.append(sampling_law, [16, n])
+                n += 1
+            else:
+                sampling_law = np.append(sampling_law, [16, -1])
+            # check secondary hadron
+            for mf in (6, 21):
+                if mf in self.reactions[mt].mf: # neutron
+                    if mf in reaction_multiplicity[mt]:
+                        multiplicity = reaction_multiplicity[mt][mf]
+                    else:
+                        multiplicity = 1
+                    for m in range(multiplicity):
+                        sampling_law = np.append(sampling_law, [mf, n])
+                    n += 1
+            # write sampling law array
+            file.write(sampling_law.astype(np.int32))
+            # for each reaction, write target tape and probability map
+            if 27 in self.reactions[mt].mf:
+                file.write(self.reactions[mt].mf[27].target_tape_alias.astype(np.int32))
+                file.write(self.reactions[mt].mf[27].prob_map_alias[:,0].astype(np.float32))
+                file.write(self.reactions[mt].mf[27].index_map_alias.astype(np.int32))
+            if 16 in self.reactions[mt].mf:
+                file.write(self.reactions[mt].mf[16].target_tape_alias.astype(np.int32))
+                file.write(self.reactions[mt].mf[16].prob_map_alias.astype(np.float32))
+                file.write(self.reactions[mt].mf[16].index_map_alias.astype(np.int32))
+            if 6 in self.reactions[mt].mf:
+                file.write(self.reactions[mt].mf[6].target_tape_alias.astype(np.int32))
+                file.write(self.reactions[mt].mf[6].equiprob_map.astype(np.float32))
+                file.write(self.reactions[mt].mf[6].index_map_alias.astype(np.int32))
+            if 21 in self.reactions[mt].mf:
+                file.write(self.reactions[mt].mf[21].target_tape_alias.astype(np.int32))
+                file.write(self.reactions[mt].mf[21].equiprob_map.astype(np.float32))   
+                file.write(self.reactions[mt].mf[21].index_map_alias.astype(np.int32))             
+        file.close()

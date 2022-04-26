@@ -3,17 +3,37 @@ import numpy as np
 from src.setting import *
 from src import gendf
 from src.binary_io import NdlBinary
+from src.algorithm import *
 
 
 class MF6Like(gendf.MF6Like):
-    def __init__(self, target_tape, equiprob_map, mf):
+    def __init__(self, target_tape, equiprob_map, mf, index_map=None):
+        # initialize
+        self.target_tape = None
+        self.prob_map = None
+        self.target_tape_alias = None
+        self.prob_map_alias = None
+        self.index_map_alias = None
+
         self._mf = mf
-        self.target_tape = target_tape
-        self.equiprob_map = equiprob_map
-        if mf == 27:
-            self.prob_map = equiprob_map
+
+        if index_map is None:  # cumul mode
+            self.target_tape = target_tape
+            self.equiprob_map = equiprob_map
+            if mf == 27:
+                self.prob_map = equiprob_map
+            else:
+                self.prob_map = equiprob_map[:,:1]
+
         else:
-            self.prob_map = equiprob_map[:,:1]
+            self.target_tape_alias = target_tape
+            self.equiprob_map = equiprob_map
+            if mf == 27:
+                self.prob_map_alias = equiprob_map
+            else:
+                self.prob_map_alias = equiprob_map[:,:1]
+            # set alias mode if index_map is not None
+            self.index_map_alias = index_map
 
     def setFromMatrix(self, matrix): # override method
         raise AttributeError("'MF6Like' object has no attribute 'setFromMatrix'")
@@ -22,6 +42,12 @@ class MF6Like(gendf.MF6Like):
         raise AttributeError("'MF6Like' object has no attribute 'genEquiProbMap'")
 
     def sampling(self, inc_group):
+        if self.index_map_alias is None:
+            return self._samplingFromCumul(inc_group)
+        else:
+            return self._samplingFromAlias(inc_group)
+    
+    def _samplingFromCumul(self, inc_group):
         if self._mf == 27:
             # sampling exit channel group
             line_pointer, group_pointer = self.target_tape[inc_group]
@@ -54,19 +80,69 @@ class MF6Like(gendf.MF6Like):
             mu = self.equiprob_map[line_pointer,rand+1] * rand2 \
                 +self.equiprob_map[line_pointer,rand+2] * (1-rand2)
 
-            if group_pointer > 187:
-                raise ValueError
-
             return [[self._mf, group_pointer, mu]]
+    
+    def _samplingFromAlias(self, inc_group):
+        if self._mf == 27:
+            # sampling exit channel group
+            target_from, group_base, target_len = self.target_tape_alias[inc_group]
+            if target_from < 0:
+                return []
+            rand = np.random.random() * target_len
+            group_up = int(rand)
+            rand -= group_up
+            if rand > self.equiprob_map[target_from + group_up]:
+                group_up = self.index_map_alias[target_from + group_up]
+            
+            return[[self._mf, group_base + group_up, -2]]
+        
+        else:
+            # sampling exit channel group
+            target_from, group_base, target_len = self.target_tape_alias[inc_group]
+            if target_from < 0:
+                return []
+            rand = np.random.random() * target_len
+            group_up = int(rand)
+            rand -= group_up
+            if rand > self.equiprob_map[target_from + group_up,0]:
+                group_up = self.index_map_alias[target_from + group_up]            
 
+            # sampling directional cosine
+            rand = np.random.random() * int(ENV["equiprob_nbin"])
+            ind_bin = int(rand)
+            rand -= ind_bin
+            mu = self.equiprob_map[target_from + group_up,ind_bin+1] * rand \
+                +self.equiprob_map[target_from + group_up,ind_bin+2] * (1-rand)
+            
+            return [[self._mf, group_base + group_up, mu]]
 
 class MF16(gendf.MF16):
-    def __init__(self, target_tape, prob_map):
+    def __init__(self, target_tape, prob_map, index_map=None):
+        # initialize
+        self.target_tape = None
+        self.prob_map = None
+        self.target_tape_alias = None
+        self.prob_map_alias = None
+        self.index_map_alias = None
+
         self._mf = 16
-        self.target_tape = target_tape
-        self.prob_map = prob_map 
+
+        if index_map is None:
+            self.target_tape = target_tape
+            self.prob_map = prob_map 
+        else:
+            self.target_tape_alias = target_tape
+            self.prob_map_alias = prob_map
+            # set alias mode if index_map is not None
+            self.index_map_alias = index_map
 
     def sampling(self, inc_group):
+        if self.index_map_alias is None:
+            return self._samplingFromCumul(inc_group)
+        else:
+            return self._samplingFromAlias(inc_group)
+
+    def _samplingFromCumul(self, inc_group):
         # sampling the number of photon
         line_start, multiplicity, group_start = self.target_tape[inc_group]
         if line_start < 0:
@@ -93,6 +169,31 @@ class MF16(gendf.MF16):
             photon += [[self._mf, group_pointer, mu]]
             multiplicity -= 1
         return photon
+    
+    def _samplingFromAlias(self, inc_group):
+        # sampling the number of photon
+        target_from, multiplicity, group_base, target_len = self.target_tape_alias[inc_group]
+        if target_from < 0:
+            return []
+        multiplicity = np.frombuffer(self.target_tape_alias[inc_group,1:2].tobytes(),
+                                     dtype=np.float32)[0]
+        photon = []
+        while True:
+            rand = np.random.random()
+            if rand > multiplicity:
+                break
+            rand = np.random.random() * target_len
+            group_up = int(rand)
+            rand -= group_up
+            if rand > self.prob_map_alias[target_from + group_up]:
+                group_up = self.index_map_alias[target_from + group_up]
+            
+            # sampling directional cosine
+            mu = np.random.random() * 2 - 1
+            photon += [[self._mf, target_from + group_up, mu]]
+            multiplicity -= 1
+        return photon
+
 
 class Reaction(gendf.Reaction):
     def __init__(self, mt, sampling_rule):
@@ -115,9 +216,17 @@ class Reaction(gendf.Reaction):
 
 
 class GPUNDL(gendf.GendfInterface):
-    def __init__(self, file_name, verbose=False):
-        super().__init__()
+    def __init__(self, file_name, verbose=False, alias=False):
+        super().__init__(alias)
 
+        self._is_alias = alias
+
+        if alias:
+            self._readAlias(file_name)
+        else:
+            self._readCumul(file_name)
+
+    def _readCumul(self, file_name):
         file = NdlBinary(file_name, mode="r")
         self.reactions = {}
 
@@ -154,6 +263,45 @@ class GPUNDL(gendf.GendfInterface):
                     self.reactions[mt].mf[mf] = MF6Like(target_tape, prob_map, mf)
                 tindex += 1
 
+    def _readAlias(self, file_name):
+        file = NdlBinary(file_name, mode="r")
+        self.reactions = {}
+
+        # read atomic mass
+        self.za = file.read()[0]
+        self.mass = file.read()[0]
+
+        # read total xs
+        self.reactions[1] = Reaction(1, None)
+        self.reactions[1].mf[3] = gendf.MF3(file.read())
+
+        # read MT table & mt alias table
+        self._mt_target = file.read()
+        self._mt_alias_table = file.read()
+        self._mt_alias_index = file.read()
+        
+        pyfunc = lambda table, index: probFromAlias(table, index)
+        vfunc = np.vectorize(pyfunc, signature='(m),(m)->(n)')
+        xs_prob = vfunc(self._mt_alias_table, self._mt_alias_index)
+
+        for i, mt in enumerate(self._mt_target):
+            sampling_rule = file.read()
+            self.reactions[mt] = Reaction(mt, sampling_rule)
+            self.reactions[mt].mf[3] = gendf.MF3(xs_prob[:,i] * self.reactions[1].mf[3].xs)
+            tindex = 0
+            for i in range(0, len(sampling_rule), 2):
+                if sampling_rule[i+1] < tindex:
+                    continue
+                mf = sampling_rule[i]
+                target_tape_alias = file.read()
+                prob_map_alias = file.read()
+                index_map_alias = file.read()
+                if mf == 16: # photon production
+                    self.reactions[mt].mf[mf] = MF16(target_tape_alias, prob_map_alias, index_map_alias)
+                else:
+                    self.reactions[mt].mf[mf] = MF6Like(target_tape_alias, prob_map_alias, mf, index_map_alias)
+                tindex += 1
+
     def getNeutronEnergyGroup(self, file_name):
         self.egn = np.load(file_name)
 
@@ -161,6 +309,24 @@ class GPUNDL(gendf.GendfInterface):
         self.egg = np.load(file_name)
 
     def sampling(self, inc_group):
+        if self._is_alias:
+            return self._samplingFromAlias(inc_group)
+        else:
+            return self._samplingFromCumul(inc_group)
+
+    def _samplingFromAlias(self, inc_group):
+        # get type of reaction
+        rand = np.random.random() * len(self._mt_target)
+        pointer = int(rand)
+        rand = rand - pointer
+        if rand > self._mt_alias_table[inc_group, pointer]:
+            pointer = self._mt_alias_index[inc_group, pointer]
+        mt = self._mt_target[pointer]
+        return self.reactions[mt].sampling(inc_group)
+
+        return
+
+    def _samplingFromCumul(self, inc_group):
         # get type of reaction
         rand = np.random.random()
         pointer = 0

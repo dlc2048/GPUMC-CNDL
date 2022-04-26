@@ -22,19 +22,17 @@ os.chdir("..")
 getSetting("settings/setting.txt", ENV)
 
 # import material 4009 binary (Beryllium 9)
-mat = GPUNDL("out/7014.bin")
+mat = GPUNDL("out/4009.bin", alias=True)
 mat.getNeutronEnergyGroup("settings/egn.npy")
 mat.getPhotonEnergyGroup("settings/egg.npy")
 
-"""
+n = 200000
+
 dump = []
-n = 10000
 for i in tqdm(range(n)):
-    dump += mat.sampling(78)
-    
+    dump += mat2.sampling(200)
 dump = np.array(dump)
-"""
-"""
+
 mf = 6
 energy, counts = np.unique(dump[dump[:,0]==mf,1], return_counts=True)
 
@@ -48,5 +46,5 @@ plt.show()
 plt.hist(dump[dump[:,0]==mf,2], bins=41)
 plt.show()
 
-np.save("dump", dump)
-"""
+#np.save("dump", dump)
+

@@ -87,7 +87,8 @@ for target_thermal in target_list_thermal:
 
     # convert endf-gendf to cndl structure
     cndl = CNDL(endf_data, gendf_data, verbose=True, MF7=int(THERMAL[str(za_thermal)][3]))
-    cndl.genEquiProb(verbose=True)
+    cndl.genAliasTable(verbose=True)
+    cndl.genEquiProb(verbose=True, alias=True)
     print("*** WRITE CNDL FILE OF MAT {} ***".format(za_thermal))
-    cndl.write(os.path.join("out", "{}.bin".format(za_thermal)), True)
+    cndl.write(os.path.join("out", "{}.bin".format(za_thermal)), get_reactions_list=True, alias=True)
     

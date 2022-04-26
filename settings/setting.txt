@@ -1,6 +1,6 @@
 endf_path		endf/n
 thermal_path		endf/kernel
-endf_target		n_0528_5-B-11.dat
+endf_target		n_8237_82-Pb-208.dat
 njoy_executable	/home/dlc2048/NJOY21/bin/njoy21
 njoy_workspace		NJOY
 njoy_group		settings/egn.npy
