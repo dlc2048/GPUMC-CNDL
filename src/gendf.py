@@ -442,6 +442,23 @@ class MF16:
             self.prob_map = np.append(self.prob_map, seg)
         return
 
+    def genEquiProbMap(self, alias=False):
+        """
+            generate dummy equiprob angle bin
+        """
+        nbin = int(ENV["equiprob_nbin"])
+        
+        if alias:
+            target_prob_map = self.prob_map_alias
+        else:
+            target_prob_map = self.prob_map
+        
+        self.equiprob_map = np.empty((len(target_prob_map), nbin + 2), dtype=np.float64)
+        self.equiprob_map[:,0] = np.copy(target_prob_map[:])
+        mu_bin = np.linspace(-1, 1, nbin+1)
+        self.equiprob_map[:,1:] = mu_bin
+        return
+
     def setAliasTable(self):
         """
             generate alias sampling table
@@ -805,7 +822,7 @@ class GENDF(GendfInterface):
         # proton nonelastic
         for mt in self.reactions:
             if mt in reaction_secondary_proton:
-                self._getMT3Gamma(mt)        
+                self._getMT3Gamma(mt)
 
     def _getMT3Gamma(self, mt):
         self.reactions[mt].mf[16] = deepcopy(self.reactions[3].mf[16])
@@ -934,3 +951,18 @@ class GENDF(GendfInterface):
                     self.reactions[3].mf[3].xs += self.reactions[mt].mf[3].xs
         if is_first:
             del self.reactions[3]
+
+    def dropInvalidMF(self):
+        """ drop all invalid mf valule """
+        for mt in self.reactions:
+            del_target = []
+            for mf in self.reactions[mt].mf:
+                if mf == 3:
+                    continue
+
+                val = self.reactions[mt].mf[mf].target_tape[:,0] >= 0
+                if np.sum(val) == 0:
+                    del_target += [mf]
+            
+            for mf in del_target:
+                del self.reactions[mt].mf[mf]

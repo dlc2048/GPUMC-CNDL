@@ -66,7 +66,8 @@ for target in target_list:
     # read GENDF file
     print("*** READ GENDF FILE ***")
     gendf_data = GENDF(os.path.join(ENV["njoy_workspace"], ENV["njoy_GENDF"]))
-
+    gendf_data.dropInvalidMF()
+    
     # convert endf-gendf to cndl structure
     cndl = CNDL(endf_data, gendf_data, verbose=True)
     cndl.genAliasTable(verbose=True)

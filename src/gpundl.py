@@ -196,6 +196,7 @@ class MF16(gendf.MF16):
 
 
 class Reaction(gendf.Reaction):
+    _QID_MAP = {1: 6, 2:21, 3:16}
     def __init__(self, mt, sampling_rule):
         self.mt = mt
         self.mf = {}
@@ -206,10 +207,12 @@ class Reaction(gendf.Reaction):
 
     def sampling(self, inc_group):
         exit_particles = []
-        for i in range(0, len(self._sampling_rule), 2):
-            if self._sampling_rule[i+1] < 0:
-                continue
-            particle_temp = self.mf[self._sampling_rule[i]].sampling(inc_group)
+        if self._sampling_rule[0]:
+            particle_temp = self.mf[27].sampling(inc_group)
+            exit_particles += particle_temp
+
+        for i in self._sampling_rule[1:]:
+            particle_temp = self.mf[self._QID_MAP[i]].sampling(inc_group)
             if len(particle_temp) > 0:
                 exit_particles += particle_temp
         return exit_particles
@@ -286,27 +289,43 @@ class GPUNDL(gendf.GendfInterface):
 
         for i, mt in enumerate(self._mt_target):
             sampling_rule = file.read()
+            mul_inv = file.read()
             self.reactions[mt] = Reaction(mt, sampling_rule)
             self.reactions[mt].mf[3] = gendf.MF3(xs_prob[:,i] * self.reactions[1].mf[3].xs)
-            tindex = 0
-            for i in range(0, len(sampling_rule), 2):
-                if sampling_rule[i+1] < tindex:
-                    continue
-                mf = sampling_rule[i]
+            if sampling_rule[0]:  # residual dose exist
                 target_tape_alias = file.read()
                 prob_map_alias = file.read()
                 index_map_alias = file.read()
-                if mf == 16: # photon production
-                    self.reactions[mt].mf[mf] = MF16(target_tape_alias, prob_map_alias, index_map_alias)
-                else:
-                    self.reactions[mt].mf[mf] = MF6Like(target_tape_alias, prob_map_alias, mf, index_map_alias)
-                tindex += 1
+                self.reactions[mt].mf[27] = MF6Like(target_tape_alias, prob_map_alias, 27, index_map_alias)
+            for i in (1,2,3):  # secondary neutron, proton and photon
+                if i in sampling_rule[1:]:
+                    target_tape_alias = file.read()
+                    prob_map_alias = file.read()
+                    index_map_alias = file.read()
+                    if i == 3:  # photon
+                        # reconstruct multiplicity
+                        mul_max = np.sum(sampling_rule[1:] == 3)
+                        multiplicity = mul_max - mul_inv
+                        tt_temp = target_tape_alias
+                        target_tape_alias = np.empty((tt_temp.shape[0], tt_temp.shape[1] + 1), dtype=np.int32)
+                        target_tape_alias[:,[0,2,3]] = tt_temp
+                        mul_encoded = multiplicity.astype(np.float32).tobytes()
+                        mul_int32 = np.frombuffer(mul_encoded, dtype=np.int32)[0]
+                        target_tape_alias[:,1] = mul_int32
+                        self.reactions[mt].mf[16] = MF16(target_tape_alias, prob_map_alias, index_map_alias)
+                    else:
+                        mf = 6 if i == 1 else 21
+                        self.reactions[mt].mf[mf] = MF6Like(target_tape_alias, prob_map_alias, mf, index_map_alias)
 
-    def getNeutronEnergyGroup(self, file_name):
+    def getNeutronEnergyGroup(self, file_name, MeV=False):
         self.egn = np.load(file_name)
+        if MeV:
+            self.egn *= 1e-6
 
-    def getPhotonEnergyGroup(self, file_name):
+    def getPhotonEnergyGroup(self, file_name, MeV=False):
         self.egg = np.load(file_name)
+        if MeV:
+            self.egg *= 1e-6
 
     def sampling(self, inc_group):
         if self._is_alias:

@@ -441,7 +441,7 @@ class CNDL(GendfInterface):
                     print("MT={} {}, MF={} is converted to equiprob map".format(mt, self.reactions[mt].__repr__(), 6))
             else:
                 for mf in self.reactions[mt].mf:
-                    if mf in (6, 21):
+                    if mf in (6, 16, 21):
                         self.reactions[mt].mf[mf].genEquiProbMap(alias)
                         if verbose:
                             print("MT={} {}, MF={} is converted to equiprob map".format(mt, self.reactions[mt].__repr__(), mf))
@@ -511,73 +511,7 @@ class CNDL(GendfInterface):
         if alias:
             self._writeAlias(file_name, get_reactions_list)
         else:
-            self._writeCumul(file_name, get_reactions_list)
-
-    def _writeCumul(self, file_name, get_reactions_list):
-        file = NdlBinary(file_name, mode="w")
-        reactions_list = np.empty(0, dtype=np.int32) # for debugging
-        # generate reaction cumulative probability map
-        reaction_cumul_map = np.empty((len(self.egn) - 1, len(self.reactions)), dtype=np.float64)
-        for i, mt in enumerate(self.reactions):
-            reaction_cumul_map[:,i] = self.reactions[mt].mf[3].xs
-            reactions_list = np.append(reactions_list, mt)
-        reaction_cumul_map = np.cumsum(reaction_cumul_map, axis=1)
-        # save ZA and atomic mass
-        file.write(np.array([self.za], dtype=np.int32))
-        file.write(np.array([self._endf.target['mass']], dtype=np.float32))
-        # save total cross section
-        file.write(reaction_cumul_map[:,-1])
-        # save reactions MT list
-        if get_reactions_list:
-            file.write(reactions_list.astype(np.int32))
-        # normalize cumulative probability map
-        reaction_cumul_map /= np.broadcast_to(np.expand_dims(reaction_cumul_map[:,-1], 1), reaction_cumul_map.shape)
-        # save reaction type sampling probability map
-        file.write(reaction_cumul_map.astype(np.float32))
-        for mt in self.reactions: 
-            # for all reactions, build sampling law card
-            # always this order: [res_dose, gamma, hadron1, hadron2, ...]
-            # sampling law card structure [pid, pointer, pid, pointer, ...]
-            n = 0
-            sampling_law = np.empty(0, dtype=np.int32)
-            # check res dose
-            if 27 in self.reactions[mt].mf:
-                sampling_law = np.append(sampling_law, [27, n])
-                n += 1
-            else:
-                sampling_law = np.append(sampling_law, [27, -1])
-            # check gamma
-            if 16 in self.reactions[mt].mf:
-                sampling_law = np.append(sampling_law, [16, n])
-                n += 1
-            else:
-                sampling_law = np.append(sampling_law, [16, -1])
-            # check secondary hadron
-            for mf in (6, 21):
-                if mf in self.reactions[mt].mf: # neutron
-                    if mf in reaction_multiplicity[mt]:
-                        multiplicity = reaction_multiplicity[mt][mf]
-                    else:
-                        multiplicity = 1
-                    for m in range(multiplicity):
-                        sampling_law = np.append(sampling_law, [mf, n])
-                    n += 1
-            # write sampling law array
-            file.write(sampling_law.astype(np.int32))
-            # for each reaction, write target tape and probability map
-            if 27 in self.reactions[mt].mf:
-                file.write(self.reactions[mt].mf[27].target_tape)
-                file.write(self.reactions[mt].mf[27].prob_map[:,0].astype(np.float32))
-            if 16 in self.reactions[mt].mf:
-                file.write(self.reactions[mt].mf[16].target_tape)
-                file.write(self.reactions[mt].mf[16].prob_map.astype(np.float32))
-            if 6 in self.reactions[mt].mf:
-                file.write(self.reactions[mt].mf[6].target_tape)
-                file.write(self.reactions[mt].mf[6].equiprob_map.astype(np.float32))
-            if 21 in self.reactions[mt].mf:
-                file.write(self.reactions[mt].mf[21].target_tape)
-                file.write(self.reactions[mt].mf[21].equiprob_map.astype(np.float32))                
-        file.close()
+            raise Exception("cumulative data is not allow!")
 
     def _writeAlias(self, file_name, get_reactions_list):
         file = NdlBinary(file_name, mode="w")
@@ -609,43 +543,50 @@ class CNDL(GendfInterface):
         file.write(reaction_alias_map.astype(np.int32))
         for mt in self.reactions: 
             # for all reactions, build sampling law card
-            # always this order: [res_dose, gamma, hadron1, hadron2, ...]
-            # sampling law card structure [pid, pointer, pid, pointer, ...]
-            n = 0
-            sampling_law = np.empty(0, dtype=np.int32)
+            # always this order: [res_dose, else, ...]
+            # sampling law card structure [res_dose, ind1, ind2...]
+            
+            """
             # check res dose
             if 27 in self.reactions[mt].mf:
                 sampling_law = np.append(sampling_law, [27, n])
                 n += 1
             else:
                 sampling_law = np.append(sampling_law, [27, -1])
-            # check gamma
-            if 16 in self.reactions[mt].mf:
-                sampling_law = np.append(sampling_law, [16, n])
-                n += 1
-            else:
-                sampling_law = np.append(sampling_law, [16, -1])
+            """
+            # res-dose always included
+            sampling_law = np.zeros(1, dtype=np.int32)
+            if 27 in self.reactions[mt].mf:
+                sampling_law[0] = 1
             # check secondary hadron
             for mf in (6, 21):
-                if mf in self.reactions[mt].mf: # neutron
+                if mf in self.reactions[mt].mf: # neutron, proton
                     if mf in reaction_multiplicity[mt]:
                         multiplicity = reaction_multiplicity[mt][mf]
                     else:
                         multiplicity = 1
-                    for m in range(multiplicity):
-                        sampling_law = np.append(sampling_law, [mf, n])
-                    n += 1
-            # write sampling law array
+                    for _ in range(multiplicity):
+                        qid = 1 if mf == 6 else 2
+                        sampling_law = np.append(sampling_law, qid)
+            # check gamma
+            mul_inv = np.zeros(len(self.egn) - 1, dtype=np.float32)
+            if 16 in self.reactions[mt].mf:
+                multiplicity = self.reactions[mt].mf[16].getMultiplicity()
+                mul_max = np.max(multiplicity)
+                mul_max = int(np.ceil(mul_max))
+                mul_inv = mul_max - multiplicity
+                for _ in range(mul_max):
+                    sampling_law = np.append(sampling_law, 3)
+
+            # write sampling law and inverse multiplicity
             file.write(sampling_law.astype(np.int32))
+            file.write(mul_inv.astype(np.float32))
+
             # for each reaction, write target tape and probability map
             if 27 in self.reactions[mt].mf:
                 file.write(self.reactions[mt].mf[27].target_tape_alias.astype(np.int32))
                 file.write(self.reactions[mt].mf[27].prob_map_alias[:,0].astype(np.float32))
                 file.write(self.reactions[mt].mf[27].index_map_alias.astype(np.int32))
-            if 16 in self.reactions[mt].mf:
-                file.write(self.reactions[mt].mf[16].target_tape_alias.astype(np.int32))
-                file.write(self.reactions[mt].mf[16].prob_map_alias.astype(np.float32))
-                file.write(self.reactions[mt].mf[16].index_map_alias.astype(np.int32))
             if 6 in self.reactions[mt].mf:
                 file.write(self.reactions[mt].mf[6].target_tape_alias.astype(np.int32))
                 file.write(self.reactions[mt].mf[6].equiprob_map.astype(np.float32))
@@ -653,5 +594,9 @@ class CNDL(GendfInterface):
             if 21 in self.reactions[mt].mf:
                 file.write(self.reactions[mt].mf[21].target_tape_alias.astype(np.int32))
                 file.write(self.reactions[mt].mf[21].equiprob_map.astype(np.float32))   
-                file.write(self.reactions[mt].mf[21].index_map_alias.astype(np.int32))             
+                file.write(self.reactions[mt].mf[21].index_map_alias.astype(np.int32))   
+            if 16 in self.reactions[mt].mf:
+                file.write(self.reactions[mt].mf[16].target_tape_alias[:,[0,2,3]].astype(np.int32))
+                file.write(self.reactions[mt].mf[16].prob_map_alias.astype(np.float32))
+                file.write(self.reactions[mt].mf[16].index_map_alias.astype(np.int32))          
         file.close()
