@@ -597,6 +597,6 @@ class CNDL(GendfInterface):
                 file.write(self.reactions[mt].mf[21].index_map_alias.astype(np.int32))   
             if 16 in self.reactions[mt].mf:
                 file.write(self.reactions[mt].mf[16].target_tape_alias[:,[0,2,3]].astype(np.int32))
-                file.write(self.reactions[mt].mf[16].prob_map_alias.astype(np.float32))
+                file.write(self.reactions[mt].mf[16].equiprob_map.astype(np.float32))
                 file.write(self.reactions[mt].mf[16].index_map_alias.astype(np.int32))          
         file.close()

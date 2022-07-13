@@ -84,7 +84,8 @@ for target_thermal in target_list_thermal:
 
     print("*** READ GENDF FILE ***")
     gendf_data = GENDF(os.path.join(ENV["njoy_workspace"], ENV["njoy_GENDF"]))
-
+    gendf_data.dropInvalidMF()
+    
     # convert endf-gendf to cndl structure
     cndl = CNDL(endf_data, gendf_data, verbose=True, MF7=int(THERMAL[str(za_thermal)][3]))
     cndl.genAliasTable(verbose=True)

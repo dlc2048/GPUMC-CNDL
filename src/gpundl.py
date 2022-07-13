@@ -343,8 +343,6 @@ class GPUNDL(gendf.GendfInterface):
         mt = self._mt_target[pointer]
         return self.reactions[mt].sampling(inc_group)
 
-        return
-
     def _samplingFromCumul(self, inc_group):
         # get type of reaction
         rand = np.random.random()

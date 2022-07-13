@@ -18,7 +18,7 @@ os.chdir("..")
 getSetting("settings/setting.txt", ENV)
 
 # import material 4009 binary (Beryllium 9)
-mat = GPUNDL("out/1002.bin", alias=True)
+mat = GPUNDL("out/66160.bin", alias=True)
 mat.getNeutronEnergyGroup("settings/egn.npy")
 mat.getPhotonEnergyGroup("settings/egg.npy")
 
