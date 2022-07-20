@@ -262,7 +262,7 @@ class CNDL(GendfInterface):
             xs_tot += mul
             if gendf_mf in self._gendf.reactions[gendf_mt].mf:
                 seg = self._gendf.reactions[gendf_mt].mf[gendf_mf].getTransMatrix(ngg)
-                mul *= self._gendf.reactions[gendf_mt].mf[gendf_mf].getMultiplicity()
+                mul *= self._gendf.reactions[gendf_mt].mf[gendf_mf].multiplicity
                 mul = np.expand_dims(mul, axis=1)
                 matrix += seg * np.broadcast_to(mul, matrix.shape)
 
@@ -571,12 +571,11 @@ class CNDL(GendfInterface):
             # check gamma
             mul_inv = np.zeros(len(self.egn) - 1, dtype=np.float32)
             if 16 in self.reactions[mt].mf:
-                multiplicity = self.reactions[mt].mf[16].getMultiplicity()
+                multiplicity = self.reactions[mt].mf[16].multiplicity
                 mul_max = np.max(multiplicity)
                 mul_max = int(np.ceil(mul_max))
                 mul_inv = mul_max - multiplicity
-                for _ in range(mul_max):
-                    sampling_law = np.append(sampling_law, 3)
+                sampling_law = np.append(sampling_law, np.ones(mul_max) * 3)
 
             # write sampling law and inverse multiplicity
             file.write(sampling_law.astype(np.int32))
@@ -596,7 +595,7 @@ class CNDL(GendfInterface):
                 file.write(self.reactions[mt].mf[21].equiprob_map.astype(np.float32))   
                 file.write(self.reactions[mt].mf[21].index_map_alias.astype(np.int32))   
             if 16 in self.reactions[mt].mf:
-                file.write(self.reactions[mt].mf[16].target_tape_alias[:,[0,2,3]].astype(np.int32))
+                file.write(self.reactions[mt].mf[16].target_tape_alias.astype(np.int32))
                 file.write(self.reactions[mt].mf[16].equiprob_map.astype(np.float32))
                 file.write(self.reactions[mt].mf[16].index_map_alias.astype(np.int32))          
         file.close()

@@ -117,7 +117,7 @@ class MF6Like(gendf.MF6Like):
             return [[self._mf, group_base + group_up, mu]]
 
 class MF16(gendf.MF16):
-    def __init__(self, target_tape, prob_map, index_map=None):
+    def __init__(self, multiplicity, target_tape, prob_map, index_map=None):
         # initialize
         self.target_tape = None
         self.prob_map = None
@@ -126,6 +126,8 @@ class MF16(gendf.MF16):
         self.index_map_alias = None
 
         self._mf = 16
+
+        self.multiplicity = multiplicity
 
         if index_map is None:
             self.target_tape = target_tape
@@ -144,11 +146,10 @@ class MF16(gendf.MF16):
 
     def _samplingFromCumul(self, inc_group):
         # sampling the number of photon
-        line_start, multiplicity, group_start = self.target_tape[inc_group]
+        line_start, group_start = self.target_tape[inc_group]
         if line_start < 0:
             return []
-        multiplicity = np.frombuffer(self.target_tape[inc_group,1:2].tobytes(),
-                                     dtype=np.float32)[0]
+        multiplicity = self.multiplicity[inc_group]
         photon = []
         while True:
             rand = np.random.random()
@@ -159,7 +160,7 @@ class MF16(gendf.MF16):
             # sampling exit channel group
             rand = np.random.random()
             while True:
-                if rand < self.prob_map[line_pointer]:
+                if rand < self.prob_map[line_pointer,0]:
                     break
                 line_pointer += 1
                 group_pointer += 1
@@ -172,11 +173,10 @@ class MF16(gendf.MF16):
     
     def _samplingFromAlias(self, inc_group):
         # sampling the number of photon
-        target_from, multiplicity, group_base, target_len = self.target_tape_alias[inc_group]
+        target_from, group_base, target_len = self.target_tape_alias[inc_group]
         if target_from < 0:
             return []
-        multiplicity = np.frombuffer(self.target_tape_alias[inc_group,1:2].tobytes(),
-                                     dtype=np.float32)[0]
+        multiplicity = self.multiplicity[inc_group]
         photon = []
         while True:
             rand = np.random.random()
@@ -185,7 +185,7 @@ class MF16(gendf.MF16):
             rand = np.random.random() * target_len
             group_up = int(rand)
             rand -= group_up
-            if rand > self.prob_map_alias[target_from + group_up]:
+            if rand > self.prob_map_alias[target_from + group_up,0]:
                 group_up = self.index_map_alias[target_from + group_up]
             
             # sampling directional cosine
@@ -306,13 +306,7 @@ class GPUNDL(gendf.GendfInterface):
                         # reconstruct multiplicity
                         mul_max = np.sum(sampling_rule[1:] == 3)
                         multiplicity = mul_max - mul_inv
-                        tt_temp = target_tape_alias
-                        target_tape_alias = np.empty((tt_temp.shape[0], tt_temp.shape[1] + 1), dtype=np.int32)
-                        target_tape_alias[:,[0,2,3]] = tt_temp
-                        mul_encoded = multiplicity.astype(np.float32).tobytes()
-                        mul_int32 = np.frombuffer(mul_encoded, dtype=np.int32)[0]
-                        target_tape_alias[:,1] = mul_int32
-                        self.reactions[mt].mf[16] = MF16(target_tape_alias, prob_map_alias, index_map_alias)
+                        self.reactions[mt].mf[16] = MF16(multiplicity, target_tape_alias, prob_map_alias, index_map_alias)
                     else:
                         mf = 6 if i == 1 else 21
                         self.reactions[mt].mf[mf] = MF6Like(target_tape_alias, prob_map_alias, mf, index_map_alias)

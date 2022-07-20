@@ -288,14 +288,13 @@ class MF16:
             self.target_tape = None
             self.prob_map = None
             return
-        self.target_tape = np.ones((ngroup, 3), dtype=np.int32) * -1
-        self.target_tape[:,1] = 0
+        self.target_tape = np.ones((ngroup, 2), dtype=np.int32) * -1
+        self.multiplicity = np.zeros((ngroup), dtype=np.float64)
         # target_tape structure
         """
             target_tape[n,0] = index of target probability array
                                for n-th incident neutron energy group
-            target_tape[n,1] = gamma multiplicity (encoded from float32 to int32)
-            target_tape[n,2] = lowest energy group of exit channel
+            target_tape[n,1] = lowest energy group of exit channel
                                when the n-th group neutron take reaction
         """
         self.prob_map = np.empty(0, dtype=np.float64)
@@ -313,20 +312,16 @@ class MF16:
             elif floor == 0: # constant spectrum mod is activated, read gamma multiplicity
                 if is_const == False:
                     raise SyntaxError
-                multiplicity = data[data_index][1] / xs[group - 1]
-                mul_encoded = multiplicity.astype(np.float32).tobytes()
-                mul_int32 = np.frombuffer(mul_encoded, dtype=np.int32)[0]
-                self.target_tape[group-1] = [const_target_index, mul_int32, const_floor]
+                self.multiplicity[group-1] = data[data_index][1] / xs[group - 1]
+                self.target_tape[group-1] = [const_target_index, const_floor]
             else: # constant spectrum mode is deactived, read spectrum
                 if is_const == True:
                     is_const = False
                 # set target tape
                 if np.sum(data[data_index][1:,0]) == 0:
                     continue
-                multiplicity = np.sum(data[data_index][1:,0]) / xs[group - 1]
-                mul_encoded = multiplicity.astype(np.float32).tobytes()
-                mul_int32 = np.frombuffer(mul_encoded, dtype=np.int32)[0]
-                self.target_tape[group-1] = [len(self.prob_map), mul_int32, floor - 1]
+                self.multiplicity[group-1] = np.sum(data[data_index][1:,0]) / xs[group - 1]
+                self.target_tape[group-1] = [len(self.prob_map), floor - 1]
                 # set prob map
                 cumul = np.cumsum(data[data_index][1:,0])
                 if cumul[-1] == 0: # no information
@@ -340,14 +335,6 @@ class MF16:
     def __repr__(self):
         return "photon multiplication and spectrum"
 
-    def getMultiplicity(self):
-        if self.index_map_alias is None:
-            target = self.target_tape
-        else:
-            target = self.target_tape_alias
-        mul_encoded = target[:,1].tobytes()
-        return np.frombuffer(mul_encoded, dtype=np.float32)
-
     def getSpectrum(self, group):
         if self.index_map_alias is None:
             return self._getSpectrumFromCumul(group)
@@ -355,28 +342,22 @@ class MF16:
             return self._getSpectrumFromAlias(group)
 
     def _getSpectrumFromCumul(self, group):
-        target, mul_int32, floor = self.target_tape[group]
+        target, floor = self.target_tape[group]
         if floor == -1:
             return None
-        # get multiplicity
-        mul_encoded = np.array([mul_int32], dtype=np.int32).tobytes()
-        multiplicity = np.frombuffer(mul_encoded, dtype=np.float32)[0]
         target_to = np.argmax(self.prob_map[target:] == 1.e0) + 1 + target
         prob = np.copy(self.prob_map[target:target_to])
         prob[1:] -= prob[:-1]
-        return np.pad(prob, (floor,0)) * multiplicity
+        return np.pad(prob, (floor,0)) * self.multiplicity[group]
 
     def _getSpectrumFromAlias(self, group):
-        target, mul_int32, floor, target_len = self.target_tape_alias[group]
+        target, floor, target_len = self.target_tape_alias[group]
         if floor == -1:
             return None
-        # get multiplicity
-        mul_encoded = np.array([mul_int32], dtype=np.int32).tobytes()
-        multiplicity = np.frombuffer(mul_encoded, dtype=np.float32)[0]
         target_to = target + target_len
         prob = np.copy(self.prob_map_alias[target:target_to])
         prob = probFromAlias(prob, self.index_map_alias[target:target_to])
-        return np.pad(prob, (floor,0)) * multiplicity
+        return np.pad(prob, (floor,0)) * self.multiplicity[group]
 
     def getTransMatrix(self, ngg):
         """
@@ -390,7 +371,7 @@ class MF16:
     def _getTransMatrixFromCumul(self, ngg):
         matrix = np.zeros((self.target_tape.shape[0], ngg), dtype=np.float64)
         for group in range(len(self.target_tape)):
-            target, mul_int32, floor = self.target_tape[group]
+            target, floor = self.target_tape[group]
             if floor < 0:
                 continue
             target_to = np.argmax(self.prob_map[target:] == 1.e0) + 1 + target
@@ -402,11 +383,11 @@ class MF16:
     def _getTransMatrixFromAlias(self, ngg):
         matrix = np.zeros((self.target_tape_alias.shape[0], ngg), dtype=np.float64)
         for group in range(len(self.target_tape_alias)):
-            target_from, mul_int32, floor, target_len = self.target_tape_alias[group]
+            target_from, floor, target_len = self.target_tape_alias[group]
             if floor < 0:
                 continue
             prob = np.copy(self.prob_map_alias[target_from:target_from+target_len])
-            prob = probFromAlias(prob, self.index_map_alias[target_from:target_from+target_len])
+            prob = probFromAlias(prob[:,0], self.index_map_alias[target_from:target_from+target_len])
             matrix[group] = np.pad(prob, (floor,ngg-floor-len(prob)))
         return matrix
 
@@ -417,25 +398,19 @@ class MF16:
         gmin = np.argmax(np.sum(matrix, axis=1) > 0)     
         floor = np.argmax(matrix > 0, axis=1)
         ceil = -np.argmax(np.flip(matrix, axis=1) > 0, axis=1)
-        self.target_tape = np.zeros((matrix.shape[0],3), dtype=np.int32)
+        self.target_tape = np.zeros((matrix.shape[0],2), dtype=np.int32)
         self.prob_map = np.empty(0, dtype=np.float64)
         # set multiplicity
-        mul_bytes = multiplicity.astype(np.float32).tobytes()
-        mul_int = np.frombuffer(mul_bytes, dtype=np.int32)
-        self.target_tape[:,1] = mul_int
+        self.multiplicity = multiplicity
         # set target tape line that under the reaction threshold
-        self.target_tape[:gmin,0] = -1
-        self.target_tape[:gmin,2] = -1
+        self.target_tape[:gmin] = -1
         for group in range(gmin,matrix.shape[0]):
             # set target tape
-            self.target_tape[group,0] = len(self.prob_map)
-            self.target_tape[group,2] = floor[group]
+            self.target_tape[group] = [len(self.prob_map), floor[group]]
             # set prob map
             seg = matrix[group,floor[group]:ceil[group]]
             if len(seg) == 0:
-                self.target_tape[group, 0] = -1
-                self.target_tape[group, 1] = 0
-                self.target_tape[group, 2] = -1
+                self.target_tape[group] = -1
                 continue
             seg = np.cumsum(seg)
             seg /= seg[-1]
@@ -478,7 +453,7 @@ class MF16:
                 continue
             unique_ind = np.where(target_unique == target_from)[0][0]
             target_len = target_unique[unique_ind + 1] - target_unique[unique_ind]
-            target_tape_alias[group, 3] = target_len
+            target_tape_alias[group, 2] = target_len
 
         # set alias prob map
         prob_map_alias = np.copy(self.prob_map)
@@ -509,7 +484,10 @@ class Reaction:
         self.mf = {}
 
     def __repr__(self):
-        return reaction_type[self.mt]
+        if self.mt in reaction_type:
+            return reaction_type[self.mt]
+        else:
+            return "({})".format(self.mt)
 
     def _add(self, egn, mf, nz, lrflag, data, label):
         if mf == 3: # cross-section
@@ -621,8 +599,18 @@ class GendfInterface:
             self._plot_type = 5
         elif self._plot_type != 5:
             raise TypeError    
-        target_tape = self.reactions[mt].mf[mf].target_tape
-        prob_map = self.reactions[mt].mf[mf].prob_map
+
+        if mf  not in (6, 21):
+            raise ValueError("MF value must be 6 or 21")
+        
+        is_alias = not (self.reactions[mt].mf[mf].index_map_alias is None)
+        if is_alias:
+            target_tape = self.reactions[mt].mf[mf].target_tape_alias
+            prob_map = self.reactions[mt].mf[mf].prob_map_alias
+        else:
+            target_tape = self.reactions[mt].mf[mf].target_tape
+            prob_map = self.reactions[mt].mf[mf].prob_map
+
         if target_tape[inc_group][0] < 0: # 0 cross section error
             first_group = np.argmax(target_tape[:,0] >= 0)
             raise ValueError("lowest incident energy group for MT={} and MF={} is {}".format(mt, mf, first_group))
@@ -680,7 +668,7 @@ class GendfInterface:
         elif self._plot_type != 3:
             raise TypeError     
 
-        plt.step(self.egn[:-1] * 1e-6, self.reactions[mt].mf[16].getMultiplicity(),
+        plt.step(self.egn[:-1] * 1e-6, self.reactions[mt].mf[16].multiplicity,
                  where='post')
         plt.title("material {}, gamma multiplicity".format(self.za))
         plt.xscale("log")
@@ -698,7 +686,7 @@ class GendfInterface:
             raise TypeError   
 
         spectrum = self.reactions[mt].mf[16].getTransMatrix(len(self.egg)-1)[inc_group]
-        spectrum *= self.reactions[mt].mf[16].getMultiplicity()[inc_group]
+        spectrum *= self.reactions[mt].mf[16].multiplicity[inc_group]
 
         plt.step(self.egg[:-1] * 1e-6, spectrum * 100, where='post') 
         plt.title("material {}, gamma spectrum".format(self.za))  
@@ -712,7 +700,7 @@ class GendfInterface:
 
     def getGammaMeanEnergy(self, mt, inc_group):
         spectrum = self.reactions[mt].mf[16].getTransMatrix(len(self.egg)-1)[inc_group]
-        spectrum *= self.reactions[mt].mf[16].getMultiplicity()[inc_group]
+        spectrum *= self.reactions[mt].mf[16].multiplicity[inc_group]
         if np.sum(spectrum) == 0:
             return 0 
 
@@ -827,18 +815,17 @@ class GENDF(GendfInterface):
     def _getMT3Gamma(self, mt):
         self.reactions[mt].mf[16] = deepcopy(self.reactions[3].mf[16])
         group_min = np.argmax(self.reactions[mt].mf[3].xs > 0)
-        cutoff, _, start_point = self.reactions[mt].mf[16].target_tape[group_min]
+        cutoff, start_point = self.reactions[mt].mf[16].target_tape[group_min]
         
-        """
-        # cut off target tape
-        self.reactions[mt].mf[16].target_tape[group_min:, 0] -= cutoff
-        self.reactions[mt].mf[16].target_tape[:group_min, 0] = -1
-        self.reactions[mt].mf[16].target_tape[:group_min, 1] = 0
-        self.reactions[mt].mf[16].target_tape[:group_min, 2] = -1
-        
-        # cut off prob map
-        self.reactions[mt].mf[16].prob_map = self.reactions[mt].mf[16].prob_map[start_point:]
-        """
+        if cutoff >= 0:
+            # cut off target tape
+            self.reactions[mt].mf[16].target_tape[group_min:, 0] -= cutoff
+            self.reactions[mt].mf[16].target_tape[:group_min] = -1
+            # cut off multiplicity
+            self.reactions[mt].mf[16].multiplicity[:group_min] = 0.e0
+            
+            # cut off prob map
+            self.reactions[mt].mf[16].prob_map = self.reactions[mt].mf[16].prob_map[cutoff:]
             
     def _tpidio(self, buffer):
         seg = parser(buffer, mode="str")

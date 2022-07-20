@@ -30,7 +30,7 @@ n = 200000
 
 dump = []
 for i in tqdm(range(n)):
-    dump += mat2.sampling(200)
+    dump += mat.sampling(200)
 dump = np.array(dump)
 
 mf = 6

@@ -1,6 +1,6 @@
 endf_path           endf/n
 thermal_path        endf/kernel
-endf_target         n_4237_42-Mo-96.dat
+endf_target         n_2125_21-Sc-45.dat
 njoy_executable     njoy
 njoy_workspace      NJOY
 njoy_group          settings/egn.npy
