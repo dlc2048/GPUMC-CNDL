@@ -1,7 +1,7 @@
 # GPUMC-CNDL
 GPUMC Compressed Neutron Data Library (CNDL) preprocessor
 ### Description
-This code convert ENDF text document to CNDL binary file  
+This code converts ENDF text document to CNDL binary file  
 that can be read by CUDA based GPU Monte Carlo  
 This package is part of GPUMC project  
 ### Environment
