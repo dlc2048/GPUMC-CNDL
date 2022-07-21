@@ -34,4 +34,3 @@ allowed mfd values and their meanings are:
                      subsection from file 10
 
 For more information, see the NJOY manual.
-
