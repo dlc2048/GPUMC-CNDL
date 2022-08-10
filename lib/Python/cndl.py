@@ -343,6 +343,7 @@ class CNDL(GendfInterface):
         xs = np.zeros(len(self.egn) - 1, dtype=np.float64)
         for mt in target_reaction:
             xs += self._gendf.reactions[mt].mf[3].xs
+        xs[xs < 1e-5] = 0.e0
         self.reactions[27].mf[3] = MF3(xs)
 
         # calculate the energy distribution (MF = 6)
@@ -356,10 +357,12 @@ class CNDL(GendfInterface):
                     continue
                 residual_energy = logMean(self.egn[egroup], self.egn[egroup+1])
                 residual_energy += self._endf.reactions[mt].Q_reaction
-                if 16 in self._gendf.reactions[mt].mf: # photon is generated
-                    residual_energy -= self._gendf.getGammaMeanEnergy(mt, egroup)
+                # if 16 in self._gendf.reactions[mt].mf: # photon is generated
+                #     residual_energy -= self._gendf.getGammaMeanEnergy(mt, egroup)
                 edist[np.argmax(self.egn > residual_energy) - 1] += xs
             if np.sum(edist) == 0: # no XS
+                continue
+            if self.reactions[27].mf[3].xs[egroup] == 0: # no XS
                 continue
             # write data and label
             lower_e = np.argmax(edist > 0)
@@ -387,6 +390,8 @@ class CNDL(GendfInterface):
                     spectrum = np.pad(spectrum, (0,len(edist) - len(spectrum)))
                     edist += xs * spectrum
             if np.sum(edist) == 0: # no spectrum
+                continue
+            if self.reactions[27].mf[3].xs[egroup] == 0: # no XS
                 continue
             # write data and label
             lower_e = np.argmax(edist > 0)

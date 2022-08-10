@@ -147,12 +147,12 @@ class MF6Like:
         else:
             raise ValueError("unexpected MF value")
 
-    def getTransMatrix(self):
+    def getTransMatrix(self, equiprob=False):
         """get group-to-group transition probability matrix"""
         if self.index_map_alias is None:
             return self._getTransMatrixFromCumul()
         else:
-            return self._getTransMatrixFromAlias()
+            return self._getTransMatrixFromAlias(equiprob)
 
     def _getTransMatrixFromCumul(self):
         matrix = np.zeros((self.target_tape.shape[0], self.target_tape.shape[0], self.prob_map.shape[1]), dtype=np.float64)
@@ -180,16 +180,21 @@ class MF6Like:
 
         return matrix
 
-    def _getTransMatrixFromAlias(self):
-        matrix = np.zeros((self.target_tape_alias.shape[0], self.target_tape_alias.shape[0], self.prob_map_alias.shape[1]), dtype=np.float64)
+    def _getTransMatrixFromAlias(self, equiprob):
+        prob_map = self.equiprob_map if equiprob else self.prob_map_alias
+        z = prob_map.shape[1] if len(prob_map.shape) == 2 else 1
+        matrix = np.zeros((self.target_tape_alias.shape[0], self.target_tape_alias.shape[0], z), dtype=np.float64)
         for i in range(len(self.target_tape_alias)):
             if self.target_tape_alias[i,0] < 0:
                 continue
             target_begin = self.target_tape_alias[i,0]
             target_len = self.target_tape_alias[i,2]
             target_group = self.target_tape_alias[i,1]
-            alias_map_seg = np.copy(self.prob_map_alias[target_begin:target_begin+target_len])
+            alias_map_seg = np.copy(prob_map[target_begin:target_begin+target_len])
             alias_index_seg = np.copy(self.index_map_alias[target_begin:target_begin+target_len])
+
+            if len(alias_map_seg.shape) == 1:
+                alias_map_seg = np.expand_dims(alias_map_seg, axis=1)
 
             alias_map_seg[:,0] = probFromAlias(alias_map_seg[:,0], alias_index_seg)
 
@@ -197,7 +202,6 @@ class MF6Like:
             matrix[i,target_group:target_group+target_len] = alias_map_seg
         
         return matrix
-
 
     def setFromMatrix(self, matrix):
         """set prob map and target tape from transition probability matrix"""

@@ -247,7 +247,7 @@ class AliasTable:
 
             prob_tag[target_low] = False
 
-        self._prob_table[prob_tag] = 1
+        self._prob_table[prob_tag] = 10
 
     def sampling(self):
         rand = np.random.random()
@@ -269,7 +269,7 @@ def probFromAlias(alias_table, alias_index):
     prob = np.zeros(alias_table.shape)
     mean = 1 / len(alias_table)
     for i in range(len(alias_table)):
-        if alias_table[i] == 1:
+        if alias_table[i] >= 1:
             prob[i] += mean
         else:
             target = alias_index[i]

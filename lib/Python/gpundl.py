@@ -7,10 +7,11 @@ this code is part of the GPU-accelerated Monte Carlo project
 """
 
 import numpy as np
+from tqdm import tqdm
 
 from lib.Python.setting import *
 from lib.Python import gendf
-from lib.Python.binary_io import NdlBinary
+from lib.Python.binary_io import GpumcBinary
 from lib.Python.algorithm import *
 
 __copyright__ = "Copyright 2021, GPUMC Project"
@@ -215,11 +216,12 @@ class MF16(gendf.MF16):
 
 class Reaction(gendf.Reaction):
     _QID_MAP = {1: 6, 2:21, 3:16}
-    def __init__(self, mt, sampling_rule):
+    def __init__(self, mt, sampling_rule, mul_inv):
         """GPUNDL neutron reaction"""
         self.mt = mt
         self.mf = {}
         self._sampling_rule = sampling_rule
+        self._mul_inv = mul_inv
 
     def _add(self, egn, mf, nz, lrflag, data, label):  # override
         raise AttributeError("'Reaction' object has no attribute '_add'")
@@ -257,7 +259,7 @@ class GPUNDL(gendf.GendfInterface):
             self._readCumul(file_name)
 
     def _readCumul(self, file_name):
-        file = NdlBinary(file_name, mode="r")
+        file = GpumcBinary(file_name, mode="r")
         self.reactions = {}
 
         # read atomic mass
@@ -294,7 +296,7 @@ class GPUNDL(gendf.GendfInterface):
                 tindex += 1
 
     def _readAlias(self, file_name):
-        file = NdlBinary(file_name, mode="r")
+        file = GpumcBinary(file_name, mode="r")
         self.reactions = {}
 
         # read atomic mass
@@ -302,7 +304,7 @@ class GPUNDL(gendf.GendfInterface):
         self.mass = file.read()[0]
 
         # read total xs
-        self.reactions[1] = Reaction(1, None)
+        self.reactions[1] = Reaction(1, None, None)
         self.reactions[1].mf[3] = gendf.MF3(file.read())
 
         # read MT table & mt alias table
@@ -317,7 +319,7 @@ class GPUNDL(gendf.GendfInterface):
         for i, mt in enumerate(self._mt_target):
             sampling_rule = file.read()
             mul_inv = file.read()
-            self.reactions[mt] = Reaction(mt, sampling_rule)
+            self.reactions[mt] = Reaction(mt, sampling_rule, mul_inv)
             self.reactions[mt].mf[3] = gendf.MF3(xs_prob[:,i] * self.reactions[1].mf[3].xs)
             if sampling_rule[0]:  # residual dose exist
                 target_tape_alias = file.read()
@@ -337,6 +339,42 @@ class GPUNDL(gendf.GendfInterface):
                     else:
                         mf = 6 if i == 1 else 21
                         self.reactions[mt].mf[mf] = MF6Like(target_tape_alias, prob_map_alias, mf, index_map_alias)
+
+    def write(self, file_name):
+        file = GpumcBinary(file_name, mode="w")
+        # save ZA and atomic mass
+        file.write(np.array([self.za], dtype=np.int32))
+        file.write(np.array([self.mass], dtype=np.float32))
+        # save total xs
+        file.write(self.reactions[1].mf[3].xs.astype(np.float32))
+        # save MT table & mt alias table
+        file.write(self._mt_target)
+        file.write(self._mt_alias_table)
+        file.write(self._mt_alias_index)
+
+        for i, mt in enumerate(self._mt_target):
+            # write sampling law and inverse multiplicity
+            file.write(self.reactions[mt]._sampling_rule.astype(np.int32))
+            file.write(self.reactions[mt]._mul_inv.astype(np.float32))
+        
+            # for each reaction, write target tape and probability map
+            if 27 in self.reactions[mt].mf:
+                file.write(self.reactions[mt].mf[27].target_tape_alias.astype(np.int32))
+                file.write(self.reactions[mt].mf[27].prob_map_alias.astype(np.float32))
+                file.write(self.reactions[mt].mf[27].index_map_alias.astype(np.int32))
+            if 6 in self.reactions[mt].mf:
+                file.write(self.reactions[mt].mf[6].target_tape_alias.astype(np.int32))
+                file.write(self.reactions[mt].mf[6].equiprob_map.astype(np.float32))
+                file.write(self.reactions[mt].mf[6].index_map_alias.astype(np.int32))
+            if 21 in self.reactions[mt].mf:
+                file.write(self.reactions[mt].mf[21].target_tape_alias.astype(np.int32))
+                file.write(self.reactions[mt].mf[21].equiprob_map.astype(np.float32))   
+                file.write(self.reactions[mt].mf[21].index_map_alias.astype(np.int32))   
+            if 16 in self.reactions[mt].mf:
+                file.write(self.reactions[mt].mf[16].target_tape_alias.astype(np.int32))
+                file.write(self.reactions[mt].mf[16].prob_map_alias.astype(np.float32))
+                file.write(self.reactions[mt].mf[16].index_map_alias.astype(np.int32))          
+        file.close()
 
     def getNeutronEnergyGroup(self, file_name, MeV=False):
         self.egn = np.load(file_name)
@@ -375,3 +413,164 @@ class GPUNDL(gendf.GendfInterface):
             pointer += 1
         mt = self._mt_target[pointer]
         return self.reactions[mt].sampling(inc_group)
+
+    def spectrumWeight(self, energy):
+        """using 1/E weight function 
+        (normalized to 1 when energy is 1 keV)
+        """
+        return 1e3 / energy
+        # return 1
+
+    def computeElasticSecondary(self):
+        """compute energy-angle distribution of secondary
+        if target is hydrogen, secondary is proton
+        otherwise, secondary is energy deposition
+        """
+        if 2 not in self.reactions:
+            raise Exception("Elastic scattering (MT=2) data missing!")
+        if self.za in (1001, 101):  # hydrogen recoil
+            self._computeHydrogenRecoil()
+        else:
+            self._computeDoseRecoil()
+
+    def _computeHydrogenRecoil(self):
+
+        # get parameters
+        ngroup = len(self.egn) - 1
+        thres = float(ENV["recoil_thres"])
+        nsample = int(ENV["recoil_nsample"])
+        equiprob_nbin = int(ENV["equiprob_nbin"])
+
+
+        # modify sampling rule
+        reaction = self.reactions[2]
+        rule = np.copy(reaction._sampling_rule)
+        rule = np.append(rule, 2)
+        reaction._sampling_rule = rule
+        mul_inv = np.copy(reaction._mul_inv)
+
+        # initialize alias map
+        target_tape_alias = -np.ones((ngroup, 3), dtype=np.int32)
+        target_tape_alias[:,-1] = 0
+        prob_map_alias = np.empty((0,equiprob_nbin + 2), dtype=np.float64)
+        index_map_alias = np.empty(0, dtype=np.int32)
+        trans_matrix = reaction.mf[6].getTransMatrix(equiprob=True)
+
+        # compute secondary energy distribution (alias)
+        for i in tqdm(range(ngroup)):
+            if self.egn[i] < thres:
+                mul_inv[i] = 1.0
+                continue
+            energy_inc = np.linspace(self.egn[i], self.egn[i+1], nsample+1)
+            energy_inc = (energy_inc[1:] + energy_inc[:-1]) / 2
+            group_target = np.where(trans_matrix[i,:,0] > 0)[0]
+
+            prob_seg = np.zeros(ngroup + 1, dtype=np.float64)
+            
+            for gout in group_target:
+                energy_out = np.linspace(self.egn[gout], self.egn[gout+1], nsample+1)
+                energy_out = (energy_out[1:] + energy_out[:-1]) / 2
+
+                # calculate the group transition probability of recoil particle
+                pss = np.zeros(ngroup + 1, dtype=np.float64)
+                for ein in energy_inc:
+                    ediff = ein - energy_out
+                    weight = self.spectrumWeight(ein) * self.spectrumWeight(energy_out)
+                    vfunc = np.vectorize(lambda ene: np.argmin(ene > self.egn))
+                    ediff_group = vfunc(ediff) - 1
+                    ediff_group[ediff < 0] = -1
+                    pss[ediff_group] += weight
+                
+                pss /= np.sum(pss)
+                pss *= trans_matrix[i,gout,0]
+
+                prob_seg += pss
+                
+            # normalize
+            prob_seg = prob_seg[:-1]
+            prob_seg /= np.sum(prob_seg)
+
+            # set alias table
+            sec_group_target = np.where(prob_seg > 0)[0]
+            group_floor = sec_group_target[0]
+            prob_seg = prob_seg[sec_group_target[0]:sec_group_target[-1]+1]
+            domain = np.arange(0, prob_seg.shape[0], 1)
+            alias = AliasTable(domain, prob_seg)
+            # proton and neutron are have same angular distribution
+            adist = np.copy(trans_matrix[i,sec_group_target[0]:sec_group_target[-1]+1])
+            adist[:,0] = alias.getProbTable()
+
+            # set tapes
+            target_tape_alias[i] = [len(prob_map_alias), group_floor, len(prob_seg)]
+            prob_map_alias = np.append(prob_map_alias, adist, axis=0)
+            index_map_alias = np.append(index_map_alias, alias.getAliasTable())
+        
+        reaction._mul_inv = mul_inv
+        self.reactions[2].mf[21] = MF6Like(target_tape_alias, prob_map_alias, 21, index_map_alias)
+
+    def _computeDoseRecoil(self):
+        
+        # get parameters
+        ngroup = len(self.egn) - 1
+        thres = float(ENV["recoil_thres"])
+        nsample = int(ENV["recoil_nsample"])
+
+        # modify sampling rule
+        reaction = self.reactions[2]
+        rule = np.copy(reaction._sampling_rule)
+        rule[0] = 1
+        reaction._sampling_rule = rule
+
+        # initialize alias map
+        target_tape_alias = -np.ones((ngroup, 3), dtype=np.int32)
+        target_tape_alias[:,-1] = 0
+        prob_map_alias = np.empty(0, dtype=np.float64)
+        index_map_alias = np.empty(0, dtype=np.int32)
+        trans_matrix = reaction.mf[6].getTransMatrix()[:,:,0]
+
+        # compute secondary energy distribution (alias)
+        for i in tqdm(range(ngroup)):
+            if self.egn[i] < thres:
+                continue
+            energy_inc = np.linspace(self.egn[i], self.egn[i+1], nsample+1)
+            energy_inc = (energy_inc[1:] + energy_inc[:-1]) / 2
+            group_target = np.where(trans_matrix[i] > 0)[0]
+
+            prob_seg = np.zeros(ngroup + 1, dtype=np.float64)
+            
+            for gout in group_target:
+                energy_out = np.linspace(self.egn[gout], self.egn[gout+1], nsample+1)
+                energy_out = (energy_out[1:] + energy_out[:-1]) / 2
+
+                # calculate the group transition probability of recoil particle
+                pss = np.zeros(ngroup + 1, dtype=np.float64)
+                for ein in energy_inc:
+                    ediff = ein - energy_out
+                    weight = self.spectrumWeight(ein) * self.spectrumWeight(energy_out)
+                    vfunc = np.vectorize(lambda ene: np.argmin(ene > self.egn))
+                    ediff_group = vfunc(ediff) - 1
+                    ediff_group[ediff < 0] = -1
+                    pss[ediff_group] += weight
+                
+                pss /= np.sum(pss)
+                pss *= trans_matrix[i,gout]
+
+                prob_seg += pss
+                
+            # normalize
+            prob_seg = prob_seg[:-1]
+            prob_seg /= np.sum(prob_seg)
+
+            # set alias table
+            sec_group_target = np.where(prob_seg > 0)[0]
+            group_floor = sec_group_target[0]
+            prob_seg = prob_seg[sec_group_target[0]:sec_group_target[-1]+1]
+            domain = np.arange(0, prob_seg.shape[0], 1)
+            alias = AliasTable(domain, prob_seg)
+
+            # set tapes
+            target_tape_alias[i] = [len(prob_map_alias), group_floor, len(prob_seg)]
+            prob_map_alias = np.append(prob_map_alias, alias.getProbTable())
+            index_map_alias = np.append(index_map_alias, alias.getAliasTable())
+
+        reaction.mf[27] = MF6Like(target_tape_alias, prob_map_alias, 27, index_map_alias)

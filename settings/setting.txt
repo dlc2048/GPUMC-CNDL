@@ -1,6 +1,7 @@
 endf_path           endf/n
 thermal_path        endf/kernel
-endf_target         n_2125_21-Sc-45.dat
+output_path         out
+endf_target         n_0525_5-B-10.dat
 njoy_executable     njoy
 njoy_workspace      NJOY
 njoy_group          settings/egn.npy
@@ -17,3 +18,5 @@ equibin_steps       1001
 thermal_thres       5
 kernel_steps        50
 temperature         293.6
+recoil_thres        100
+recoil_nsample      200

@@ -308,3 +308,8 @@ class MF4AngularDistribution:
 
 def energyToMuCM(alpha, inc_energy, out_energy):
     return (2*out_energy/inc_energy - (1+alpha))/(1-alpha)
+
+
+def maxwellian(energy, temperature):
+    return 2 * np.pi * energy**0.5 / (np.pi * constants.BOLTZMANN * temperature)**1.5 \
+        * np.exp(-energy / constants.BOLTZMANN / temperature)

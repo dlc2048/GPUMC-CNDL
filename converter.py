@@ -12,8 +12,6 @@ from time import sleep
 
 import numpy as np
 from pyne.endf import Evaluation
-from scipy.special import eval_legendre
-import matplotlib.pyplot as plt
 
 from lib.Python.setting import *
 from lib.Python.gendf import GENDF
@@ -88,4 +86,4 @@ if __name__ == "__main__":
         cndl.genAliasTable(verbose=True)
         cndl.genEquiProb(verbose=True, alias=True)
         print("*** WRITE CNDL FILE OF MAT {} ***".format(za))
-        cndl.write(os.path.join("out", "{}.bin".format(cndl.za)), get_reactions_list=True, alias=True)
+        cndl.write(os.path.join(ENV["output_path"], "{}.bin".format(cndl.za)), get_reactions_list=True, alias=True)

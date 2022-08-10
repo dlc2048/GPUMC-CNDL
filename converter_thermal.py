@@ -13,14 +13,12 @@ import subprocess
 from time import sleep
 
 import numpy as np
-import matplotlib.pyplot as plt
 from pyne.endf import Evaluation
 
 from lib.Python.setting import *
 from lib.Python.gendf import GENDF
 from lib.Python.njoy import NjoyInput
 from lib.Python.cndl import CNDL
-from lib.Python.algorithm import interp1d, interp2d
 from lib.Python.physics import *
 
 __copyright__ = "Copyright 2021, GPUMC Project"
@@ -108,5 +106,5 @@ if __name__ == "__main__":
         cndl.genAliasTable(verbose=True)
         cndl.genEquiProb(verbose=True, alias=True)
         print("*** WRITE CNDL FILE OF MAT {} ***".format(za_thermal))
-        cndl.write(os.path.join("out", "{}.bin".format(za_thermal)), get_reactions_list=True, alias=True)
+        cndl.write(os.path.join(ENV["output_path"], "{}.bin".format(za_thermal)), get_reactions_list=True, alias=True)
         

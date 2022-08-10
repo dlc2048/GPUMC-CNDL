@@ -11,16 +11,20 @@ import os
 par_dir = os.path.abspath(os.path.join(os.getcwd(), os.pardir))
 sys.path.append(par_dir)
 
-from src.gpundl import GPUNDL
-from src.setting import *
+from lib.Python.gpundl import GPUNDL
+from lib.Python.setting import *
 
 os.chdir("..")
 getSetting("settings/setting.txt", ENV)
 
 # import material 4009 binary (Beryllium 9)
-mat = GPUNDL("out/4009.bin", alias=True)
+mat = GPUNDL("out/5010.bin", alias=True)
 mat.getNeutronEnergyGroup("settings/egn.npy")
 mat.getPhotonEnergyGroup("settings/egg.npy")
+
+mat2 = GPUNDL("out/101.bin", alias=True)
+mat2.getNeutronEnergyGroup("settings/egn.npy")
+mat2.getPhotonEnergyGroup("settings/egg.npy")
 
 # print reactions list
 print(mat.reactions)
